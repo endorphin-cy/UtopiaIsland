@@ -36,13 +36,11 @@
 //! Add a `package.rs` binary that builds, signs and zips the plugin:
 //!
 //! ```rust,no_run
-//! fn main() {
-//!     winisland_plugin_api::packager::PluginPackager::from_cargo()
-//!         .unwrap()
-//!         .signing_key_path("signing_key.pem")
-//!         .build()
-//!         .unwrap();
-//! }
+//! winisland_plugin_api::packager::PluginPackager::from_cargo()
+//!     .unwrap()
+//!     .signing_key_path("signing_key.pem")
+//!     .build()
+//!     .unwrap();
 //! ```
 //!
 //! Then run `cargo run --bin pack` to produce a signed `.zip` distributable.
