@@ -31,7 +31,7 @@ impl PluginManager {
         }
     }
 
-    fn load_dll(&self, dll_path: &Path) {
+    pub(crate) fn load_dll(&self, dll_path: &Path) {
         match NativePlugin::load(dll_path) {
             Ok(native) => {
                 log::info!(
