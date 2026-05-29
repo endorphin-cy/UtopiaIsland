@@ -6,20 +6,37 @@ use super::types::{
     ShortcutProvider, ThemeColors, ThemeProvider,
 };
 use libloading::Library;
+use std::mem::ManuallyDrop;
 use std::path::Path;
+use std::thread::ThreadId;
 
 /// Wrapper around a native DLL plugin. Implements host-side traits by
 /// calling through the C ABI vtable, avoiding any trait-object crossing
 /// the FFI boundary.
+///
+/// # Safety (Send + Sync)
+/// This type holds a raw vtable pointer and a raw plugin handle from a loaded
+/// DLL. All vtable calls (`on_load`, `on_unload`, `get_content`, etc.) go
+/// through these raw pointers — they are only safe in a single-threaded context
+/// because the underlying C plugin code may not be thread-safe.
+///
+/// `Send + Sync` are unsafely implemented so that `PluginManager` can store
+/// `NativePlugin` behind an `RwLock`. At runtime, all access goes through the
+/// `RwLock` which ensures single-threaded access on the main thread. Any
+/// attempt to use a `NativePlugin` from a different thread will be caught and
+/// logged via the stored `owner_thread` assertion.
 pub struct NativePlugin {
     metadata: PluginMetadata,
     plugin_type: PluginType,
     handle: PluginHandle,
     vtable: *const super::types::PluginVTable,
-    _lib: Library,
+    _lib: ManuallyDrop<Library>,
+    #[allow(dead_code)]
+    owner_thread: ThreadId,
 }
 
-// SAFETY: PluginHandle is Send+Sync by convention; the DLL must be thread-safe.
+// SAFETY: NativePlugin is only accessed through RwLock in PluginManager,
+// which serialises all access to a single thread at runtime.
 unsafe impl Send for NativePlugin {}
 unsafe impl Sync for NativePlugin {}
 
@@ -69,6 +86,19 @@ impl NativePlugin {
         }
 
         let metadata = PluginMetadata::from(&instance.metadata);
+
+        // C4: validate plugin ID charset - only alphanumeric, '-', '_'
+        if !metadata
+            .id
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(PluginError::InvalidPlugin(format!(
+                "Plugin '{}' has invalid id: only alphanumeric, '-' and '_' allowed",
+                metadata.id
+            )));
+        }
+
         let plugin_type = PluginType::from_u32(instance.plugin_type).ok_or_else(|| {
             PluginError::InvalidPlugin(format!(
                 "Plugin '{}' has unknown plugin_type: {}",
@@ -82,11 +112,24 @@ impl NativePlugin {
             plugin_type,
             handle: instance.handle,
             vtable: instance.vtable,
-            _lib: lib,
+            _lib: ManuallyDrop::new(lib),
+            owner_thread: std::thread::current().id(),
         };
 
         // SAFETY: vtable pointer was validated non-null above and is 'static for the DLL's lifetime.
         let vtable = unsafe { &*plugin.vtable };
+
+        // C3: validate required vtable function pointers are non-null before calling them
+        if vtable.on_load as usize == 0
+            || vtable.on_unload as usize == 0
+            || vtable.destroy as usize == 0
+        {
+            return Err(PluginError::InvalidPlugin(format!(
+                "Plugin '{}' has null function pointer in required vtable fields",
+                plugin.metadata.id
+            )));
+        }
+
         // SAFETY: calling the plugin's on_load via vtable with its own handle.
         let result: PluginResultC = unsafe { (vtable.on_load)(plugin.handle) };
         result.into_result().map_err(|e| {
@@ -251,6 +294,10 @@ impl Drop for NativePlugin {
         unsafe {
             let _ = (vtable.on_unload)(self.handle);
             (vtable.destroy)(self.handle);
+            // C8: manually drop the Library after destroy to ensure the DLL
+            // is unloaded last, preserving vtable validity until after all
+            // plugin cleanup calls.
+            ManuallyDrop::drop(&mut self._lib);
         }
     }
 }

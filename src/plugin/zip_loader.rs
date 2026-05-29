@@ -4,6 +4,8 @@ use serde::Deserialize;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+const MAX_FILENAME_COMPONENT: usize = 255;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginManifest {
     pub name: String,
@@ -108,13 +110,37 @@ pub fn extract_plugin(
             .by_index(i)
             .map_err(|e| format!("Zip read error: {}", e))?;
         let name = entry.name().to_string();
+
+        // C5: reject symlinks in ZIP entries
+        if entry.is_symlink() {
+            return Err(format!(
+                "Zip entry '{}' is a symlink, refusing to extract",
+                name
+            ));
+        }
+
+        // C5: reject empty path components, path traversal, ADS, and absolute paths
         if name.split(['/', '\\']).any(|c| c == "..")
             || name.starts_with('/')
             || name.starts_with('\\')
             || name.contains(':')
+            || name.is_empty()
+            || name.split(['/', '\\']).any(|c| c.is_empty())
         {
             return Err(format!("Zip entry '{}' has unsafe path", name));
         }
+
+        // C5: reject filename components longer than MAX_FILENAME_COMPONENT
+        if name
+            .split(['/', '\\'])
+            .any(|c| c.len() > MAX_FILENAME_COMPONENT)
+        {
+            return Err(format!(
+                "Zip entry '{}' exceeds max filename component length",
+                name
+            ));
+        }
+
         let out_path = dest.join(&name);
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).ok();

@@ -34,18 +34,31 @@ impl PluginManager {
     pub(crate) fn load_dll(&self, dll_path: &Path) {
         match NativePlugin::load(dll_path) {
             Ok(native) => {
-                log::info!(
-                    "Loaded plugin: {} ({})",
-                    native.metadata().name,
-                    native.metadata().id
-                );
+                let plugin_id = native.metadata().id.clone();
+
+                // C4: reject duplicate plugin IDs
+                let entries = match self.entries.read() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        log::error!("Lock poisoned while loading plugin '{}'", plugin_id);
+                        return;
+                    }
+                };
+                if entries.iter().any(|p| p.metadata().id == plugin_id) {
+                    log::warn!("Plugin '{}' already loaded, skipping duplicate", plugin_id);
+                    return;
+                }
+                drop(entries);
+
                 if let Ok(mut entries) = self.entries.write() {
                     entries.push(native);
-                } else {
-                    log::error!(
-                        "Lock poisoned while adding plugin '{}'",
-                        native.metadata().id
+                    log::info!(
+                        "Loaded plugin: {} ({})",
+                        entries.last().unwrap().metadata().name,
+                        plugin_id
                     );
+                } else {
+                    log::error!("Lock poisoned while adding plugin '{}'", plugin_id);
                 }
             }
             Err(e) => {
@@ -88,7 +101,10 @@ impl PluginManager {
     }
 
     pub fn unload(&self, plugin_id: &str) -> Result<(), PluginError> {
-        let mut entries = self.entries.write().unwrap();
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|e| PluginError::ExecutionError(format!("Lock poisoned: {}", e)))?;
         let idx = entries
             .iter()
             .position(|p| p.metadata().id == plugin_id)
@@ -98,9 +114,14 @@ impl PluginManager {
     }
 
     pub fn list_content_providers(&self) -> Vec<String> {
-        self.entries
-            .read()
-            .unwrap()
+        let entries = match self.entries.read() {
+            Ok(g) => g,
+            Err(e) => {
+                log::error!("Plugin lock poisoned: {}", e);
+                return Vec::new();
+            }
+        };
+        entries
             .iter()
             .filter(|p| p.plugin_type() == PluginType::Content)
             .map(|p| p.metadata().id.clone())
@@ -108,9 +129,14 @@ impl PluginManager {
     }
 
     pub fn list_theme_providers(&self) -> Vec<String> {
-        self.entries
-            .read()
-            .unwrap()
+        let entries = match self.entries.read() {
+            Ok(g) => g,
+            Err(e) => {
+                log::error!("Plugin lock poisoned: {}", e);
+                return Vec::new();
+            }
+        };
+        entries
             .iter()
             .filter(|p| p.plugin_type() == PluginType::Theme)
             .map(|p| p.metadata().id.clone())
@@ -118,9 +144,14 @@ impl PluginManager {
     }
 
     pub fn list_shortcut_providers(&self) -> Vec<String> {
-        self.entries
-            .read()
-            .unwrap()
+        let entries = match self.entries.read() {
+            Ok(g) => g,
+            Err(e) => {
+                log::error!("Plugin lock poisoned: {}", e);
+                return Vec::new();
+            }
+        };
+        entries
             .iter()
             .filter(|p| p.plugin_type() == PluginType::Shortcut)
             .map(|p| p.metadata().id.clone())
@@ -131,7 +162,10 @@ impl PluginManager {
     where
         F: FnOnce(&dyn ContentProvider) -> R,
     {
-        let entries = self.entries.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .map_err(|e| PluginError::ExecutionError(format!("Lock poisoned: {}", e)))?;
         let entry = entries
             .iter()
             .find(|p| p.metadata().id == plugin_id)
@@ -151,7 +185,10 @@ impl PluginManager {
     where
         F: FnOnce(&mut dyn ContentProvider) -> R,
     {
-        let mut entries = self.entries.write().unwrap();
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|e| PluginError::ExecutionError(format!("Lock poisoned: {}", e)))?;
         let entry = entries
             .iter_mut()
             .find(|p| p.metadata().id == plugin_id)
@@ -171,7 +208,10 @@ impl PluginManager {
     where
         F: FnOnce(&dyn ThemeProvider) -> R,
     {
-        let entries = self.entries.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .map_err(|e| PluginError::ExecutionError(format!("Lock poisoned: {}", e)))?;
         let entry = entries
             .iter()
             .find(|p| p.metadata().id == plugin_id)
@@ -191,7 +231,10 @@ impl PluginManager {
     where
         F: FnOnce(&mut dyn ShortcutProvider) -> R,
     {
-        let mut entries = self.entries.write().unwrap();
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|e| PluginError::ExecutionError(format!("Lock poisoned: {}", e)))?;
         let entry = entries
             .iter_mut()
             .find(|p| p.metadata().id == plugin_id)
