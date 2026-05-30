@@ -320,6 +320,15 @@ pub fn draw_island(
     let expanded_alpha_f = (expansion_progress.powf(2.0)).clamp(0.0, 1.0) * (1.0 - hide_progress);
     let mini_alpha_f = (1.0 - expansion_progress * 1.5).clamp(0.0, 1.0) * (1.0 - hide_progress);
 
+    let palette = if expanded_alpha_f > 0.01 || mini_alpha_f > 0.01 {
+        get_media_palette(media)
+    } else {
+        vec![
+            Color::from_rgb(180, 180, 180),
+            Color::from_rgb(100, 100, 100),
+        ]
+    };
+
     let viz_h_scale = 0.45 + (1.0 - 0.45) * expansion_progress;
 
     let mut widget_animating = false;
@@ -356,6 +365,7 @@ pub fn draw_island(
             dt,
             text_color,
             text_color_sec,
+            palette: palette.clone(),
         });
         canvas.restore();
 
@@ -473,7 +483,7 @@ pub fn draw_island(
                 widget_animating = true;
             }
         }
-        let palette = get_media_palette(media);
+        let palette = &palette;
         let viz_x = offset_x + current_w - 17.0 * global_scale;
         let viz_y = offset_y + current_h / 2.0;
         draw_visualizer(DrawVisualizerParams {
@@ -482,7 +492,7 @@ pub fn draw_island(
             y: viz_y,
             alpha,
             is_playing: media.is_playing,
-            palette: &palette,
+            palette,
             spectrum: &media.spectrum,
             w_scale: 0.55 * global_scale,
             h_scale: viz_h_scale * global_scale,
