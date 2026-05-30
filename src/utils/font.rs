@@ -2,6 +2,7 @@ use crate::core::persistence::load_config;
 use skia_safe::{Canvas, Font, FontMgr, FontStyle, Paint, Typeface};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
 static GLOBAL_FONT_MANAGER: OnceLock<FontManager> = OnceLock::new();
@@ -9,7 +10,7 @@ static GLOBAL_FONT_MANAGER: OnceLock<FontManager> = OnceLock::new();
 type TextGroup = (String, Typeface, bool);
 type TextGroups = Vec<TextGroup>;
 type TextCacheValue = (String, TextGroups);
-type TextCacheMap = HashMap<String, TextCacheValue>;
+type TextCacheMap = HashMap<u64, TextCacheValue>;
 
 pub struct DrawTextInRectParams<'a> {
     pub canvas: &'a Canvas,
@@ -41,6 +42,28 @@ thread_local! {
     static FALLBACK_CACHE: RefCell<HashMap<(char, u32), Typeface>> = RefCell::new(HashMap::new());
     static TEXT_CACHE: RefCell<TextCacheMap> = RefCell::new(HashMap::new());
     static CUSTOM_TYPEFACE: RefCell<Option<(String, Typeface)>> = const { RefCell::new(None) };
+}
+
+const FALLBACK_CACHE_LIMIT: usize = 2000;
+const TEXT_CACHE_LIMIT: usize = 500;
+
+fn evict_one_if_full<K, V>(cache: &mut HashMap<K, V>, limit: usize)
+where
+    K: Clone + std::cmp::Eq + std::hash::Hash,
+{
+    if cache.len() > limit {
+        if let Some(key) = cache.keys().next().cloned() {
+            cache.remove(&key);
+        }
+    }
+}
+
+fn hash_cache_key(text: &str, bold: u32, size_key: i32) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    bold.hash(&mut hasher);
+    size_key.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn style_to_key(style: FontStyle) -> u32 {
@@ -90,9 +113,7 @@ fn get_typeface_for_char(c: char, style: FontStyle) -> (Typeface, bool) {
     let s_key = style_to_key(style);
     FALLBACK_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if cache.len() > 2000 {
-            cache.clear();
-        }
+        evict_one_if_full(&mut cache, FALLBACK_CACHE_LIMIT);
         if let Some(tf) = cache.get(&(c, s_key)) {
             let embolden = needs_synthetic_bold(tf, style);
             return (tf.clone(), embolden);
@@ -218,17 +239,10 @@ impl FontManager {
     }
 
     pub fn measure_text_cached(&self, text: &str, size: f32, style: FontStyle) -> f32 {
-        let cache_key = format!(
-            "measure\0{}\0{:?}\0{}",
-            text,
-            style,
-            (size * 100.0).round() as i32
-        );
+        let cache_key = hash_cache_key(text, style_to_key(style), (size * 100.0).round() as i32);
         TEXT_CACHE.with(|cache| {
             let mut cache_mut = cache.borrow_mut();
-            if cache_mut.len() > 500 {
-                cache_mut.clear();
-            }
+            evict_one_if_full(&mut cache_mut, TEXT_CACHE_LIMIT);
             if !cache_mut.contains_key(&cache_key) {
                 let mut current_w = 0.0;
                 let mut groups: Vec<(String, Typeface, bool)> = Vec::new();
@@ -260,7 +274,7 @@ impl FontManager {
                     current_w += w;
                 }
 
-                cache_mut.insert(cache_key.clone(), (current_w.to_string(), groups));
+                cache_mut.insert(cache_key, (current_w.to_string(), groups));
                 return current_w;
             }
             let (w_str, _) = cache_mut.get(&cache_key).unwrap();
@@ -274,15 +288,10 @@ impl FontManager {
         } else {
             FontStyle::normal()
         };
-        let cache_key = format!(
-            "{}\0{}\0{}",
-            params.text, params.bold as u32, params.size as i32
-        );
+        let cache_key = hash_cache_key(params.text, params.bold as u32, params.size as i32);
         TEXT_CACHE.with(|cache| {
             let mut cache_mut = cache.borrow_mut();
-            if cache_mut.len() > 500 {
-                cache_mut.clear();
-            }
+            evict_one_if_full(&mut cache_mut, TEXT_CACHE_LIMIT);
             if !cache_mut.contains_key(&cache_key) {
                 let mut groups: TextGroups = Vec::new();
                 let mut current_group = String::new();
@@ -303,7 +312,7 @@ impl FontManager {
                 if let Some(ltf) = last_tf {
                     groups.push((current_group, ltf, last_embolden));
                 }
-                cache_mut.insert(cache_key.clone(), (params.text.to_string(), groups));
+                cache_mut.insert(cache_key, (params.text.to_string(), groups));
             }
             let (_, groups) = cache_mut.get(&cache_key).unwrap();
             let mut x = params.x;
