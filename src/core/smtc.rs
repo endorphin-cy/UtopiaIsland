@@ -297,10 +297,12 @@ fn smtc_poll_loop(
                     let src = current_lyrics_source.clone();
                     let fb = current_lyrics_fallback;
                     let info_tx_clone = info_tx.clone();
+                    let local_dir = load_config().lyrics_local_dir;
                     drop(info);
                     tokio::spawn(async move {
                         if let Some(lyrics) =
-                            fetch_lyrics(&title, &artist, duration, &src, fb).await
+                            fetch_lyrics(&title, &artist, duration, &src, fb, local_dir.as_deref())
+                                .await
                         {
                             let current = info_tx_clone.borrow();
                             if current.title == title && current.artist == artist {
@@ -740,8 +742,18 @@ fn fetch_properties(
         let artist = new_artist.clone();
         let src = lyrics_source.to_string();
         let fb = lyrics_fallback;
+        let local_dir = load_config().lyrics_local_dir;
         tokio::spawn(async move {
-            if let Some(lyrics) = fetch_lyrics(&title, &artist, duration_secs, &src, fb).await {
+            if let Some(lyrics) = fetch_lyrics(
+                &title,
+                &artist,
+                duration_secs,
+                &src,
+                fb,
+                local_dir.as_deref(),
+            )
+            .await
+            {
                 let current = info_tx_clone.borrow();
                 if current.title == title && current.artist == artist {
                     drop(current);

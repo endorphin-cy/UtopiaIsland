@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// Check whether a search query is related to a song name.
 fn query_matches_song(query: &str, song_name: &str) -> bool {
     let q = query.to_lowercase();
     let n = song_name.to_lowercase();
@@ -33,25 +34,76 @@ pub struct LyricLine {
     pub text: String,
 }
 
+/// Try to read a matching `.lrc` file from `local_dir`.
+///
+/// Lookup order:
+///   1. `{artist} - {title}.lrc`
+///   2. `{title}.lrc`
+///
+/// Both are matched case-insensitively on the filesystem (Windows).
+fn fetch_lyrics_local(title: &str, artist: &str, local_dir: &str) -> Option<Arc<Vec<LyricLine>>> {
+    let san = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+            .collect()
+    };
+    let title_san = san(title);
+    let artist_san = san(artist);
+
+    let candidates = if artist_san.is_empty() {
+        vec![format!("{}.lrc", title_san)]
+    } else {
+        vec![
+            format!("{} - {}.lrc", artist_san, title_san),
+            format!("{}.lrc", title_san),
+        ]
+    };
+
+    for file_name in &candidates {
+        let path = std::path::Path::new(local_dir).join(file_name);
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            let lines = parse_lyrics(&content, "");
+            if !lines.is_empty() {
+                return Some(Arc::new(lines));
+            }
+        }
+    }
+    None
+}
+
 pub async fn fetch_lyrics(
     title: &str,
     artist: &str,
     duration_secs: u64,
     source: &str,
     fallback: bool,
+    local_dir: Option<&str>,
 ) -> Option<Arc<Vec<LyricLine>>> {
     if title.is_empty() {
         return None;
     }
-    // Without an artist the search is unreliable — it may match a totally
-    // unrelated song (e.g. a browser video title hitting a random NetEase hit).
-    // Only try the selected source once and skip the cross-source fallback.
+
+    // 1. Local .lrc file takes priority
+    if let Some(dir) = local_dir
+        && !dir.is_empty()
+        && let Some(lyrics) = fetch_lyrics_local(title, artist, dir)
+    {
+        return Some(lyrics);
+    }
+
+    // 2. Without an artist the online search is unreliable — it may match a
+    //    totally unrelated song (e.g. a browser video title hitting a random
+    //    NetEase hit). Only try the selected source once, skip fallback.
     if artist.trim().is_empty() {
         return match source {
             "lrclib" => fetch_lyrics_lrclib(title, artist, duration_secs).await,
             _ => fetch_lyrics_163(title, artist).await,
         };
     }
+
+    // 3. Online sources
     let result = match source {
         "lrclib" => fetch_lyrics_lrclib(title, artist, duration_secs).await,
         _ => fetch_lyrics_163(title, artist).await,
