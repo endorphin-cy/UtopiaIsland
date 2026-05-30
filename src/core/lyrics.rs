@@ -4,6 +4,23 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// Check whether a search query is related to a song name.
+fn query_matches_song(query: &str, song_name: &str) -> bool {
+    let q = query.to_lowercase();
+    let n = song_name.to_lowercase();
+    if q.contains(&n) || n.contains(&q) {
+        return true;
+    }
+    let words: Vec<&str> = q
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() > 2)
+        .collect();
+    if words.is_empty() {
+        return false;
+    }
+    words.iter().any(|w| n.contains(w))
+}
+
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -17,16 +34,76 @@ pub struct LyricLine {
     pub text: String,
 }
 
+/// Try to read a matching `.lrc` file from `local_dir`.
+///
+/// Lookup order:
+///   1. `{artist} - {title}.lrc`
+///   2. `{title}.lrc`
+///
+/// Both are matched case-insensitively on the filesystem (Windows).
+fn fetch_lyrics_local(title: &str, artist: &str, local_dir: &str) -> Option<Arc<Vec<LyricLine>>> {
+    let san = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+            .collect()
+    };
+    let title_san = san(title);
+    let artist_san = san(artist);
+
+    let candidates = if artist_san.is_empty() {
+        vec![format!("{}.lrc", title_san)]
+    } else {
+        vec![
+            format!("{} - {}.lrc", artist_san, title_san),
+            format!("{}.lrc", title_san),
+        ]
+    };
+
+    for file_name in &candidates {
+        let path = std::path::Path::new(local_dir).join(file_name);
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            let lines = parse_lyrics(&content, "");
+            if !lines.is_empty() {
+                return Some(Arc::new(lines));
+            }
+        }
+    }
+    None
+}
+
 pub async fn fetch_lyrics(
     title: &str,
     artist: &str,
     duration_secs: u64,
     source: &str,
     fallback: bool,
+    local_dir: Option<&str>,
 ) -> Option<Arc<Vec<LyricLine>>> {
     if title.is_empty() {
         return None;
     }
+
+    // 1. Local .lrc file takes priority
+    if let Some(dir) = local_dir
+        && !dir.is_empty()
+        && let Some(lyrics) = fetch_lyrics_local(title, artist, dir)
+    {
+        return Some(lyrics);
+    }
+
+    // 2. Without an artist the online search is unreliable — it may match a
+    //    totally unrelated song (e.g. a browser video title hitting a random
+    //    NetEase hit). Only try the selected source once, skip fallback.
+    if artist.trim().is_empty() {
+        return match source {
+            "lrclib" => fetch_lyrics_lrclib(title, "", duration_secs).await,
+            _ => fetch_lyrics_163(title, "").await,
+        };
+    }
+
+    // 3. Online sources
     let result = match source {
         "lrclib" => fetch_lyrics_lrclib(title, artist, duration_secs).await,
         _ => fetch_lyrics_163(title, artist).await,
@@ -45,7 +122,13 @@ async fn fetch_lyrics_163(title: &str, artist: &str) -> Option<Arc<Vec<LyricLine
     if let Some(r) = fetch_lyrics_163_inner(title, artist).await {
         return Some(r);
     }
-    fetch_lyrics_163_inner(title, "").await
+    // Only retry without artist when one was originally given, otherwise the
+    // second call is identical to the first and we don't gain anything.
+    if !artist.is_empty() {
+        fetch_lyrics_163_inner(title, "").await
+    } else {
+        None
+    }
 }
 
 async fn fetch_lyrics_163_inner(title: &str, artist: &str) -> Option<Arc<Vec<LyricLine>>> {
@@ -94,7 +177,17 @@ async fn fetch_lyrics_163_inner(title: &str, artist: &str) -> Option<Arc<Vec<Lyr
     }
 
     if song_id.is_none() {
-        song_id = songs.first()?.get("id")?.as_i64();
+        let first = songs.first()?;
+        // Before blindly accepting the first result, verify it has at least
+        // some relation to the original search query. Browser video titles
+        // (e.g. "How to build a PC") would otherwise match a random unrelated
+        // song on the platform.
+        if let Some(name) = first.get("name").and_then(|n| n.as_str())
+            && !query_matches_song(&query, name)
+        {
+            return None;
+        }
+        song_id = first.get("id")?.as_i64();
     }
 
     let id = song_id?;
@@ -193,6 +286,12 @@ async fn fetch_lyrics_lrclib_search(title: &str, artist: &str) -> Option<Arc<Vec
 
     for item in arr {
         if let Some(synced) = item.get("syncedLyrics").and_then(|s| s.as_str()) {
+            // Skip if the result seems unrelated to the original query
+            if let Some(name) = item.get("trackName").and_then(|n| n.as_str())
+                && !query_matches_song(&query, name)
+            {
+                continue;
+            }
             let lines = parse_lyrics(synced, "");
             if !lines.is_empty() {
                 return Some(Arc::new(lines));

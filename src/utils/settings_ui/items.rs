@@ -48,6 +48,13 @@ pub enum SettingsItem {
         btn_label: String,
         reset_label: Option<String>,
     },
+    RowFolderPicker {
+        label: String,
+        btn_label: String,
+        clear_label: Option<String>,
+        current_path: Option<String>,
+        enabled: bool,
+    },
     RowSourceSelect {
         label: String,
         options: Vec<(String, bool)>,
@@ -88,6 +95,13 @@ impl SettingsItem {
             SettingsItem::CenterText { .. } => 35.0,
             SettingsItem::Spacer { height } => *height,
             SettingsItem::FontPreview { .. } => 70.0,
+            SettingsItem::RowFolderPicker { current_path, .. } => {
+                if current_path.as_ref().is_some_and(|p| !p.is_empty()) {
+                    64.0
+                } else {
+                    ROW_HEIGHT
+                }
+            }
             _ => ROW_HEIGHT,
         }
     }
@@ -98,6 +112,7 @@ impl SettingsItem {
             SettingsItem::RowStepper { .. }
                 | SettingsItem::RowSwitch { .. }
                 | SettingsItem::RowFontPicker { .. }
+                | SettingsItem::RowFolderPicker { .. }
                 | SettingsItem::RowSourceSelect { .. }
                 | SettingsItem::RowAppItem { .. }
                 | SettingsItem::RowLabel { .. }

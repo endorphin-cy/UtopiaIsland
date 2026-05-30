@@ -696,6 +696,8 @@ impl App {
             self.smtc
                 .set_lyrics_source(self.config.lyrics_source.clone());
             self.smtc.set_lyrics_fallback(self.config.lyrics_fallback);
+            self.smtc
+                .set_lyrics_local_dir(self.config.lyrics_local_dir.clone());
             self.smtc.set_allowed_apps(self.config.smtc_apps.clone());
 
             if old_style != self.config.island_style {

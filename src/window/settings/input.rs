@@ -561,6 +561,23 @@ impl SettingsApp {
                     win.request_redraw();
                 }
             }
+            ClickResult::FolderSelect(idx) => {
+                if let Some(SettingsItem::RowFolderPicker { label, .. }) = items.get(idx)
+                    && label == &tr("lyrics_local_dir")
+                    && let Some(path) = rfd::FileDialog::new().pick_folder()
+                {
+                    self.config.lyrics_local_dir = Some(path.to_string_lossy().into_owned());
+                    changed = true;
+                }
+            }
+            ClickResult::FolderClear(idx) => {
+                if let Some(SettingsItem::RowFolderPicker { label, .. }) = items.get(idx)
+                    && label == &tr("lyrics_local_dir")
+                {
+                    self.config.lyrics_local_dir = None;
+                    changed = true;
+                }
+            }
             ClickResult::StepperDec(idx) | ClickResult::StepperInc(idx) => {
                 let is_dec = matches!(result, ClickResult::StepperDec(_));
                 if let Some(item) = items.get(idx)
