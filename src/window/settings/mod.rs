@@ -603,8 +603,13 @@ impl SettingsApp {
                     .config
                     .lyrics_local_dir
                     .as_ref()
+                    .filter(|p| !p.is_empty())
                     .map(|_| tr("folder_clear")),
-                current_path: self.config.lyrics_local_dir.clone(),
+                current_path: self
+                    .config
+                    .lyrics_local_dir
+                    .clone()
+                    .filter(|p| !p.is_empty()),
                 enabled: show_lyrics,
             },
             SettingsItem::GroupEnd,
