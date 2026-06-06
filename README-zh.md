@@ -34,5 +34,8 @@ cargo build --release
 
 在提PR前，请先看[Contributing](./Docs/CONTRIBUTING-zh.md)
 
+> [!IMPORTANT]
+> 所有未遵守[贡献指南](CONTRIBUTING.md)的PR将会被close
+
 ## 许可证
 [MIT](LICENSE)
