@@ -33,5 +33,8 @@ If you have the energy or interest, PR are welcome
 
 And You should see [Contributing](CONTRIBUTING.md)
 
+> [!IMPORTANT]
+> Any PRs not following the [Contributing Guidelines](CONTRIBUTING.md) will be closed.
+
 ## LICENCE
 [MIT](LICENSE)
