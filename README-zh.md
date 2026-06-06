@@ -38,4 +38,4 @@ cargo build --release
 > 所有未遵守[贡献指南](CONTRIBUTING.md)的PR将会被close
 
 ## 许可证
-[MIT](LICENSE)
+本项目遵循 [GNU General Public License v3.0.](LICENSE)
