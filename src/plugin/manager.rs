@@ -26,6 +26,11 @@ impl PluginManager {
 
     pub fn load_all(&self) {
         let dlls = discover_plugins(&self.plugin_dir);
+        log::info!(
+            "Discovering plugins in {}: {} DLL(s) found",
+            self.plugin_dir.display(),
+            dlls.len()
+        );
         for dll_path in dlls {
             self.load_dll(&dll_path);
         }
@@ -109,7 +114,12 @@ impl PluginManager {
             .iter()
             .position(|p| p.metadata().id == plugin_id)
             .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
-        entries.remove(idx);
+        let plugin = entries.remove(idx);
+        log::info!(
+            "Plugin unloaded: {} ({})",
+            plugin.metadata().name,
+            plugin_id
+        );
         Ok(())
     }
 

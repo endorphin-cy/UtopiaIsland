@@ -44,6 +44,10 @@ impl TrayManager {
         if self.is_light != is_light {
             self.is_light = is_light;
             let _ = self.tray.set_icon(Some(Self::load_tray_icon(is_light)));
+            log::info!(
+                "Tray icon theme updated to {}",
+                if is_light { "light" } else { "dark" }
+            );
         }
     }
 

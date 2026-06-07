@@ -46,6 +46,9 @@ pub fn set_autostart(enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
                     )),
                 );
                 let _ = RegCloseKey(hkey);
+                log::info!("Autostart: enabled ({})", exe_path_str);
+            } else {
+                log::error!("Autostart: RegCreateKeyExW failed: {:?}", res);
             }
         }
     } else {
@@ -69,6 +72,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
             {
                 let _ = RegDeleteValueW(hkey, app_name);
                 let _ = RegCloseKey(hkey);
+                log::info!("Autostart: disabled");
             }
         }
     }

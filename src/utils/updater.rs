@@ -42,7 +42,10 @@ pub fn start_update_checker() {
 
         // Initial check
         if crate::core::persistence::load_config().check_for_updates {
+            log::info!("Update checker started");
             do_check(&app_dir).await;
+        } else {
+            log::info!("Update checker: disabled in config");
         }
 
         loop {
@@ -67,14 +70,23 @@ async fn do_check(app_dir: &Path) {
     let remote_json_str = match HTTP_CLIENT.get(UPDATE_URL_JSON).send().await {
         Ok(resp) => match resp.text().await {
             Ok(s) => s,
-            Err(_) => return,
+            Err(_) => {
+                log::warn!("Update check: failed to read remote version info");
+                return;
+            }
         },
-        Err(_) => return,
+        Err(_) => {
+            log::warn!("Update check: HTTP request failed for version_info.json");
+            return;
+        }
     };
 
     let remote_info: VersionInfo = match serde_json::from_str(&remote_json_str) {
         Ok(info) => info,
-        Err(_) => return,
+        Err(_) => {
+            log::warn!("Update check: failed to parse remote version info");
+            return;
+        }
     };
 
     let mut needs_update = false;
@@ -83,18 +95,35 @@ async fn do_check(app_dir: &Path) {
             if let Ok(local_info) = serde_json::from_str::<VersionInfo>(&local_content) {
                 if remote_info.timestamp > local_info.timestamp {
                     needs_update = true;
+                } else {
+                    log::info!(
+                        "Update check: current version is up-to-date ({})",
+                        local_info.timestamp
+                    );
                 }
             } else {
+                log::info!("Update check: local version info corrupted, will update");
                 needs_update = true;
             }
         } else {
+            log::warn!("Update check: failed to read local version file");
             needs_update = true;
         }
     } else {
+        log::info!("Update check: no local version info, fresh install");
         needs_update = true;
     }
 
     if needs_update {
+        log::info!(
+            "Update available: {} -> {}",
+            if local_json_path.exists() {
+                "current"
+            } else {
+                "none"
+            },
+            remote_info.timestamp
+        );
         let title_w: Vec<u16> = format!("{}\0", tr("update_available_title"))
             .encode_utf16()
             .collect();
@@ -126,23 +155,28 @@ async fn do_check(app_dir: &Path) {
 }
 
 async fn perform_update(remote_json_str: String, app_dir: PathBuf) {
+    log::info!("Update: downloading new executable");
     let bytes = match HTTP_CLIENT.get(UPDATE_URL_EXE).send().await {
         Ok(r) => match r.bytes().await {
             Ok(b) => b.to_vec(),
             Err(_) => {
+                log::error!("Update: download failed (read response)");
                 show_error_box(tr("update_failed_title"), tr("update_failed_dl")).await;
                 return;
             }
         },
         Err(_) => {
+            log::error!("Update: download request failed");
             show_error_box(tr("update_failed_title"), tr("update_failed_dl")).await;
             return;
         }
     };
+    log::info!("Update: downloaded {} bytes", bytes.len());
 
     let current_exe = match std::env::current_exe() {
         Ok(path) => path,
         Err(_) => {
+            log::error!("Update: failed to get current exe path");
             show_error_box(tr("update_failed_title"), tr("update_failed_save")).await;
             return;
         }
@@ -150,12 +184,20 @@ async fn perform_update(remote_json_str: String, app_dir: PathBuf) {
     let new_exe_path = current_exe.with_extension("exe.new");
 
     if fs::write(&new_exe_path, &bytes).is_err() {
+        log::error!(
+            "Update: failed to write new exe to {}",
+            new_exe_path.display()
+        );
         show_error_box(tr("update_failed_title"), tr("update_failed_save")).await;
         return;
     }
 
     let local_json_path = app_dir.join("version_info.json");
     let _ = fs::write(local_json_path, remote_json_str);
+    log::info!(
+        "Update: new exe written to {}, spawning installer",
+        new_exe_path.display()
+    );
 
     let current_exe_str = current_exe.to_string_lossy().into_owned();
     let new_exe_str = new_exe_path.to_string_lossy().into_owned();

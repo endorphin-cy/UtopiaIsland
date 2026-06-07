@@ -35,6 +35,7 @@ impl AudioProcessor {
             gate_override,
             cancel_token,
         };
+        log::info!("AudioProcessor created, starting capture and meter threads");
         processor.start_capture();
         processor.start_meter_thread();
         processor
@@ -66,6 +67,11 @@ impl AudioProcessor {
                     device.Activate(CLSCTX_ALL, None).ok()
                 })()
             };
+            log::info!(
+                "Audio meter thread started (COM: {}, session_mgr: {})",
+                hr.is_ok(),
+                session_manager.is_some()
+            );
             while !cancel.is_cancelled() {
                 let mut max_peak = 0.0f32;
                 if let Some(ref mgr) = session_manager {
@@ -116,12 +122,28 @@ impl AudioProcessor {
             let host = cpal::default_host();
             let device = match host.default_output_device() {
                 Some(d) => d,
-                None => return,
+                None => {
+                    log::warn!("Audio capture: no default output device found");
+                    return;
+                }
             };
+            let device_name = device.name().unwrap_or_else(|_| "unknown".to_string());
             let config = match device.default_output_config() {
                 Ok(c) => c,
-                Err(_) => return,
+                Err(_) => {
+                    log::warn!(
+                        "Audio capture: no default output config for '{}'",
+                        device_name
+                    );
+                    return;
+                }
             };
+            log::info!(
+                "Audio capture: device='{}', config={:?} {:?}",
+                device_name,
+                config.sample_format(),
+                config.config()
+            );
             let stream_config: StreamConfig = config.config();
             let stream = match config.sample_format() {
                 SampleFormat::F32 => build_capture_stream::<f32>(
@@ -148,27 +170,36 @@ impl AudioProcessor {
                 _ => return,
             };
             if let Ok(s) = stream {
+                log::info!("Audio capture stream created for '{}'", device_name);
                 // SAFETY: CoInitializeEx initializes COM for this thread. COINIT_MULTITHREADED
                 // is safe as we don't use single-threaded COM apartments.
                 let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
                 // SAFETY: CoCreateInstance and subsequent COM calls create audio session objects.
                 // All objects are locally scoped and valid for the lifetime of this thread.
                 let _session = unsafe {
-                    let enumerator: IMMDeviceEnumerator =
-                        match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok() {
-                            Some(e) => e,
-                            None => {
-                                let _ = s.play();
-                                while !cancel.is_cancelled() {
-                                    std::thread::sleep(std::time::Duration::from_millis(100));
-                                }
-                                if hr.is_ok() {
-                                    // SAFETY: COM was initialized above, no COM objects to drop.
-                                    CoUninitialize();
-                                }
-                                return;
+                    let enumerator: IMMDeviceEnumerator = match CoCreateInstance(
+                        &MMDeviceEnumerator,
+                        None,
+                        CLSCTX_ALL,
+                    )
+                    .ok()
+                    {
+                        Some(e) => e,
+                        None => {
+                            log::warn!(
+                                "Audio capture: IMMDeviceEnumerator CoCreateInstance failed, running without mute"
+                            );
+                            let _ = s.play();
+                            while !cancel.is_cancelled() {
+                                std::thread::sleep(std::time::Duration::from_millis(100));
                             }
-                        };
+                            if hr.is_ok() {
+                                // SAFETY: COM was initialized above, no COM objects to drop.
+                                CoUninitialize();
+                            }
+                            return;
+                        }
+                    };
                     let mut session = None;
                     if let Ok(device) = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
                         && let Ok(mgr) = device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None)
@@ -288,6 +319,7 @@ fn update_spectrum(
 
 impl Drop for AudioProcessor {
     fn drop(&mut self) {
+        log::info!("AudioProcessor dropped");
         self.cancel_token.cancel();
     }
 }

@@ -18,12 +18,21 @@ use winit::event_loop::EventLoop;
 
 fn main() {
     let _ = logger::init();
+    log::info!("WinIsland v{} starting", env!("CARGO_PKG_VERSION"));
+
     let config = core::persistence::load_config();
     logger::check_crash_flag();
     init_i18n(&config.language);
 
     let args: Vec<String> = env::args().collect();
     let is_restart = args.iter().any(|arg| arg == "--restart");
+    log::info!("Args: {:?}", args);
+    log::info!(
+        "Config: style={:?}, scale={}, lang={}",
+        config.island_style,
+        config.global_scale,
+        config.language
+    );
 
     if args.iter().any(|arg| arg == "--settings") {
         let _settings_mutex;
@@ -37,7 +46,9 @@ fn main() {
                 return;
             }
         }
+        log::info!("Starting settings window");
         crate::window::settings::run_settings(config);
+        log::info!("Settings window closed");
     } else {
         if is_restart {
             std::thread::sleep(std::time::Duration::from_millis(300));
@@ -97,5 +108,6 @@ fn main() {
         let event_loop = EventLoop::new().unwrap();
         let mut app = App::default();
         event_loop.run_app(&mut app).unwrap();
+        log::info!("Application event loop exited, shutting down");
     }
 }

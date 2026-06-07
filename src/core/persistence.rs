@@ -12,11 +12,13 @@ pub fn get_config_path() -> PathBuf {
 }
 pub fn load_config() -> AppConfig {
     let path = get_config_path();
-    let mut config: AppConfig = if let Ok(content) = fs::read_to_string(path)
+    let mut config: AppConfig = if let Ok(content) = fs::read_to_string(&path)
         && let Ok(config) = toml::from_str(&content)
     {
+        log::info!("Config loaded from: {}", path.display());
         config
     } else {
+        log::info!("Config file not found, using defaults");
         let default = AppConfig::default();
         save_config(&default);
         return default;
@@ -31,6 +33,7 @@ pub fn load_config() -> AppConfig {
 pub fn save_config(config: &AppConfig) {
     let path = get_config_path();
     if let Ok(content) = toml::to_string_pretty(config) {
-        let _ = fs::write(path, content);
+        let _ = fs::write(&path, content);
+        log::info!("Config saved to: {}", path.display());
     }
 }

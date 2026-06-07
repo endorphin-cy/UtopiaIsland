@@ -219,10 +219,20 @@ fn smtc_poll_loop(
     let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
         Ok(op) => match op.get() {
             Ok(m) => m,
-            Err(_) => return,
+            Err(_) => {
+                log::error!("SMTC: failed to get session manager");
+                return;
+            }
         },
-        Err(_) => return,
+        Err(_) => {
+            log::error!("SMTC: RequestAsync failed");
+            return;
+        }
     };
+    log::info!(
+        "SMTC: session manager created (COM initialized: {})",
+        com_initialized
+    );
 
     // COM event bridge: COM callback -> std::sync::mpsc -> polling loop
     let (event_tx, event_rx) = std::sync::mpsc::channel::<()>();
@@ -274,6 +284,9 @@ fn smtc_poll_loop(
             || !info.is_playing
             || info.title.is_empty();
         if timeline_ready {
+            if attempt > 0 {
+                log::info!("SMTC: initial timeline ready after {} retries", attempt + 1);
+            }
             drop(info);
             break;
         }
@@ -297,6 +310,7 @@ fn smtc_poll_loop(
                 current_manager = new_mgr;
                 let _ = current_manager.SessionsChanged(&handler);
             }
+            log::info!("SMTC: manager refreshed (30s interval)");
             last_manager_refresh = Instant::now();
         }
 
@@ -378,6 +392,7 @@ fn smtc_poll_loop(
         if let Some(seek_pos) = seek_pos
             && let Some(session) = get_target_session(&current_manager, &current_allowed_apps)
         {
+            log::info!("SMTC: seek to {}ms", seek_pos);
             let ticks = seek_pos as i64 * 10_000;
             let _ = session.TryChangePlaybackPositionAsync(ticks);
             let mut info = info_tx.borrow().clone();
@@ -390,6 +405,7 @@ fn smtc_poll_loop(
 
         // Handle playback commands
         while let Ok(cmd) = playback_rx.try_recv() {
+            log::info!("SMTC: playback command {:?}", cmd);
             if let Some(session) = get_target_session(&current_manager, &current_allowed_apps) {
                 match cmd {
                     PlaybackCommand::Toggle => {
@@ -415,6 +431,7 @@ fn smtc_poll_loop(
 
         // Check COM events — when triggered, immediately update and reset the regular timer
         if event_rx.try_recv().is_ok() {
+            log::info!("SMTC: session change event received, updating immediately");
             update_media_info(
                 &current_manager,
                 &info_tx,
@@ -470,6 +487,7 @@ fn update_media_info(
         if !info.title.is_empty() {
             drop(info);
             let _ = info_tx.send(MediaInfo::default());
+            log::info!("SMTC: session lost, cleared media info");
         }
     }
 }
@@ -523,6 +541,7 @@ fn auto_allow_new_apps(
 
     if changed {
         save_config(&config);
+        log::info!("SMTC: auto-allowed new session(s): {:?}", new_app_ids);
     }
 
     new_allowed
@@ -661,6 +680,12 @@ fn fetch_properties(
         let song_changed =
             info.title != new_title || info.artist != new_artist || info.album != new_album;
         if song_changed {
+            log::info!(
+                "SMTC: track changed -> {} - {} / {}",
+                new_title,
+                new_artist,
+                new_album
+            );
             info.title = new_title.clone();
             info.artist = new_artist.clone();
             info.album = new_album.clone();
@@ -708,8 +733,15 @@ fn fetch_properties(
             info.last_update = Instant::now();
         }
 
+        let was_playing = info.is_playing;
         info.last_smtc_pos = smtc_pos;
         info.is_playing = is_playing;
+        if !song_changed && was_playing != is_playing {
+            log::info!(
+                "SMTC: playback state -> {}",
+                if is_playing { "Playing" } else { "Paused" }
+            );
+        }
         info.duration_secs = duration_secs;
         info.duration_ms = duration_ms_from_tl;
         let _ = info_tx.send(info);
@@ -775,15 +807,25 @@ fn fetch_properties(
                     {
                         drop(current);
                         let mut new_info = info_tx_clone.borrow().clone();
-                        new_info.thumbnail = Some(Arc::new(bytes));
+                        new_info.thumbnail = Some(Arc::new(bytes.clone()));
                         new_info.thumbnail_hash = hash;
                         let _ = info_tx_clone.send(new_info);
+                        log::info!(
+                            "SMTC: thumbnail fetched ({} bytes, hash={:#x})",
+                            bytes.len(),
+                            hash
+                        );
                     }
                     return;
                 }
                 let delay = if attempt < 3 { 300 } else { 500 };
                 std::thread::sleep(Duration::from_millis(delay));
             }
+            log::warn!(
+                "SMTC: thumbnail fetch failed for '{}' - '{}' after 10 attempts",
+                title_clone,
+                artist_clone
+            );
         });
     }
 
@@ -795,7 +837,7 @@ fn fetch_properties(
         let fb = lyrics_fallback;
         let local_dir = local_dir.map(|s| s.to_string());
         tokio::spawn(async move {
-            if let Some(lyrics) = fetch_lyrics(
+            let lyrics = fetch_lyrics(
                 &title,
                 &artist,
                 duration_secs,
@@ -803,14 +845,24 @@ fn fetch_properties(
                 fb,
                 local_dir.as_deref(),
             )
-            .await
-            {
-                let current = info_tx_clone.borrow();
-                if current.title == title && current.artist == artist {
-                    drop(current);
-                    let mut new_info = info_tx_clone.borrow().clone();
-                    new_info.lyrics = Some(lyrics);
-                    let _ = info_tx_clone.send(new_info);
+            .await;
+            match lyrics {
+                Some(lyrics) => {
+                    log::info!("SMTC: lyrics fetched ({} lines from {})", lyrics.len(), src);
+                    let current = info_tx_clone.borrow();
+                    if current.title == title && current.artist == artist {
+                        drop(current);
+                        let mut new_info = info_tx_clone.borrow().clone();
+                        new_info.lyrics = Some(lyrics);
+                        let _ = info_tx_clone.send(new_info);
+                    }
+                }
+                None => {
+                    log::warn!(
+                        "SMTC: lyrics fetch returned none for '{}' - '{}'",
+                        title,
+                        artist
+                    );
                 }
             }
         });
