@@ -13,7 +13,6 @@ const MAX_LOG_SIZE: u64 = 1_024_000; // 1MB
 
 struct FileLogger {
     file: Mutex<File>,
-    target: PathBuf,
 }
 
 impl Log for FileLogger {
@@ -118,12 +117,12 @@ fn log_file_path() -> PathBuf {
 }
 
 fn roll_if_needed(path: &PathBuf) {
-    if let Ok(meta) = fs::metadata(path) {
-        if meta.len() > MAX_LOG_SIZE {
-            let mut old = path.clone();
-            old.set_extension("old.log");
-            let _ = fs::rename(path, old);
-        }
+    if let Ok(meta) = fs::metadata(path)
+        && meta.len() > MAX_LOG_SIZE
+    {
+        let mut old = path.clone();
+        old.set_extension("old.log");
+        let _ = fs::rename(path, old);
     }
 }
 
