@@ -1,5 +1,6 @@
 use crate::core::audio::AudioProcessor;
 use crate::core::config::{AppConfig, PADDING, TOP_OFFSET, WINDOW_TITLE};
+use crate::core::context::ContextManager;
 use crate::core::persistence::load_config;
 use crate::core::render::{draw_island, get_mini_control_rects};
 use crate::core::smtc::SmtcListener;
@@ -93,6 +94,7 @@ pub struct App {
     is_cursor_suppressed: bool,
     touch_id: Option<u64>,
     touch_pos: PhysicalPosition<f64>,
+    ctx_mgr: ContextManager,
     plugin_mgr: PluginManager,
     pending_install: Option<mpsc::Receiver<InstallResult>>,
 }
@@ -153,6 +155,7 @@ impl Default for App {
             is_cursor_suppressed: false,
             touch_id: None,
             touch_pos: PhysicalPosition::new(0.0, 0.0),
+            ctx_mgr: ContextManager::new(),
             plugin_mgr: PluginManager::default(),
             pending_install: None,
         }
@@ -1139,34 +1142,9 @@ impl ApplicationHandler for App {
                         if self.config.smtc_enabled && !media_info.title.is_empty() {
                             music_active = true;
                         }
-
-                        let plugin_text: Option<(String, Option<String>)> = if !music_active {
-                            self.plugin_mgr.find_content(|provider| {
-                                match provider.get_content()? {
-                                    crate::plugin::types::IslandContent::Notification {
-                                        title,
-                                        message,
-                                        ..
-                                    } => Some((title, Some(message))),
-                                    crate::plugin::types::IslandContent::Status {
-                                        label,
-                                        value,
-                                        ..
-                                    } => Some((label, Some(value))),
-                                    crate::plugin::types::IslandContent::Music {
-                                        title,
-                                        artist,
-                                        ..
-                                    } => Some((title, Some(artist))),
-                                    crate::plugin::types::IslandContent::Shortcut {
-                                        name, ..
-                                    } => Some((name, None)),
-                                    crate::plugin::types::IslandContent::Custom(_) => None,
-                                }
-                            })
-                        } else {
-                            None
-                        };
+                        self.ctx_mgr.set_smtc_active(music_active);
+                        self.ctx_mgr.tick();
+                        let mini_content = self.ctx_mgr.current_mini();
 
                         let widget_animating = draw_island(
                             surface,
@@ -1214,10 +1192,7 @@ impl ApplicationHandler for App {
                                     lyrics_delay: self.config.lyrics_delay,
                                     dt,
                                 },
-                                plugin: crate::core::render::PluginTextParams {
-                                    title: plugin_text.as_ref().map(|(t, _)| t.as_str()),
-                                    message: plugin_text.as_ref().and_then(|(_, m)| m.as_deref()),
-                                },
+                                mini_content,
                             },
                         );
                         if widget_animating && let Some(win) = &self.window {
