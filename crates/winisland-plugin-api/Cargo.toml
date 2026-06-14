@@ -1,12 +1,14 @@
 [package]
 name = "winisland-plugin-api"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "C ABI types for WinIsland plugin development, with optional build-time packaging and signing tools"
 repository = "https://github.com/Eatgrapes/WinIsland"
+homepage = "https://github.com/Eatgrapes/WinIsland"
 license = "MIT"
 keywords = ["plugin", "dynamic-island", "winisland"]
 categories = ["api-bindings", "development-tools::build-utils"]
+readme = "README.md"
 
 [features]
 default = []
