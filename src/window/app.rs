@@ -876,6 +876,8 @@ impl ApplicationHandler for App {
                 + self.plugin_mgr.list_theme_providers().len()
                 + self.plugin_mgr.list_shortcut_providers().len();
             log::info!("{} plugin(s) loaded", plugin_count);
+            let host_api = crate::plugin::manager::init_host_api();
+            self.plugin_mgr.init_plugin_host_api(host_api);
             let max_w = self.config.expanded_width.max(450.0);
             self.os_w = (max_w * self.config.global_scale + PADDING) as u32;
             self.os_h = (self.config.expanded_height * self.config.global_scale + PADDING) as u32;
@@ -1143,6 +1145,7 @@ impl ApplicationHandler for App {
                             music_active = true;
                         }
                         self.ctx_mgr.set_smtc_active(music_active);
+                        crate::plugin::manager::drain_pending_contexts(&mut self.ctx_mgr);
                         self.ctx_mgr.tick();
                         let mini_content = self.ctx_mgr.current_mini();
 
