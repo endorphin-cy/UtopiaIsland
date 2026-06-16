@@ -1,5 +1,6 @@
 use crate::core::audio::AudioProcessor;
 use crate::core::config::{AppConfig, PADDING, TOP_OFFSET, WINDOW_TITLE};
+use crate::core::context::ContextManager;
 use crate::core::persistence::load_config;
 use crate::core::render::{draw_island, get_mini_control_rects};
 use crate::core::smtc::SmtcListener;
@@ -93,6 +94,7 @@ pub struct App {
     is_cursor_suppressed: bool,
     touch_id: Option<u64>,
     touch_pos: PhysicalPosition<f64>,
+    ctx_mgr: ContextManager,
     plugin_mgr: PluginManager,
     pending_install: Option<mpsc::Receiver<InstallResult>>,
 }
@@ -153,6 +155,7 @@ impl Default for App {
             is_cursor_suppressed: false,
             touch_id: None,
             touch_pos: PhysicalPosition::new(0.0, 0.0),
+            ctx_mgr: ContextManager::new(),
             plugin_mgr: PluginManager::default(),
             pending_install: None,
         }
@@ -873,6 +876,8 @@ impl ApplicationHandler for App {
                 + self.plugin_mgr.list_theme_providers().len()
                 + self.plugin_mgr.list_shortcut_providers().len();
             log::info!("{} plugin(s) loaded", plugin_count);
+            let host_api = crate::plugin::manager::init_host_api();
+            self.plugin_mgr.init_plugin_host_api(host_api);
             let max_w = self.config.expanded_width.max(450.0);
             self.os_w = (max_w * self.config.global_scale + PADDING) as u32;
             self.os_h = (self.config.expanded_height * self.config.global_scale + PADDING) as u32;
@@ -1139,6 +1144,10 @@ impl ApplicationHandler for App {
                         if self.config.smtc_enabled && !media_info.title.is_empty() {
                             music_active = true;
                         }
+                        self.ctx_mgr.set_smtc_active(music_active);
+                        crate::plugin::manager::drain_pending_contexts(&mut self.ctx_mgr);
+                        self.ctx_mgr.tick();
+                        let mini_content = self.ctx_mgr.current_mini();
 
                         let widget_animating = draw_island(
                             surface,
@@ -1186,6 +1195,7 @@ impl ApplicationHandler for App {
                                     lyrics_delay: self.config.lyrics_delay,
                                     dt,
                                 },
+                                mini_content,
                             },
                         );
                         if widget_animating && let Some(win) = &self.window {

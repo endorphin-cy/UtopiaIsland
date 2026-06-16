@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 pub use winisland_plugin_api::{
-    AnimationConfigC, ISLAND_CONTENT_TAG_MUSIC, ISLAND_CONTENT_TAG_NOTIFICATION,
-    ISLAND_CONTENT_TAG_STATUS, IslandContentC, PluginGetInstanceFn, PluginHandle, PluginInstanceC,
+    AnimationConfigC, ContextDataC, ContextIdC, HostApiC, HostStateC, ISLAND_CONTENT_TAG_MUSIC,
+    ISLAND_CONTENT_TAG_NOTIFICATION, ISLAND_CONTENT_TAG_STATUS, IslandContentC, PRIORITY_HIGH,
+    PRIORITY_LOW, PRIORITY_MEDIUM, PluginGetInstanceFn, PluginHandle, PluginInstanceC,
     PluginMetadataC, PluginResultC, PluginType, PluginVTable, ShortcutC, ThemeColorsC,
 };
 
@@ -204,4 +205,78 @@ pub trait ThemeProvider: Plugin {
 pub trait ShortcutProvider: Plugin {
     fn get_shortcuts(&self) -> Vec<Shortcut>;
     fn execute(&mut self, shortcut_id: &str) -> Result<(), String>;
+}
+
+// ---------------------------------------------------------------------------
+// Context types (push-based, Host side)
+// ---------------------------------------------------------------------------
+
+/// Host state snapshot returned by [`HostApiC::query_host_state`].
+#[derive(Debug, Clone, Default)]
+pub struct HostState {
+    pub media_title: String,
+    pub media_artist: String,
+    pub is_playing: bool,
+    pub theme: String,
+}
+
+impl From<&HostStateC> for HostState {
+    fn from(c: &HostStateC) -> Self {
+        Self {
+            media_title: read_c_str(&c.media_title),
+            media_artist: read_c_str(&c.media_artist),
+            is_playing: c.is_playing,
+            theme: read_c_str(&c.theme),
+        }
+    }
+}
+
+impl From<&HostState> for HostStateC {
+    fn from(s: &HostState) -> Self {
+        fn fill<const N: usize>(buf: &mut [u8; N], val: &str) {
+            let len = val.len().min(N - 1);
+            buf[..len].copy_from_slice(&val.as_bytes()[..len]);
+        }
+        let mut c = HostStateC {
+            media_title: [0u8; 256],
+            media_artist: [0u8; 256],
+            is_playing: s.is_playing,
+            theme: [0u8; 32],
+        };
+        fill(&mut c.media_title, &s.media_title);
+        fill(&mut c.media_artist, &s.media_artist);
+        fill(&mut c.theme, &s.theme);
+        c
+    }
+}
+
+/// Convert a C ABI [`ContextDataC`] into a [`HostState`] (host-side context data).
+///
+/// Note: The priority field is mapped directly from the C-level constant.
+impl From<&ContextDataC> for crate::core::context::PluginContext {
+    fn from(c: &ContextDataC) -> Self {
+        let priority = match c.priority {
+            PRIORITY_LOW => crate::core::context::Priority::Low,
+            PRIORITY_MEDIUM => crate::core::context::Priority::Medium,
+            PRIORITY_HIGH => crate::core::context::Priority::High,
+            _ => crate::core::context::Priority::Medium,
+        };
+        Self {
+            id: crate::core::context::ContextId {
+                source: String::new(), // filled in by the caller
+                uuid: String::new(),   // filled in by ContextManager::push_context
+            },
+            priority,
+            title: read_c_str(&c.title),
+            body: read_c_str(&c.body),
+            icon: Vec::new(), // filled from plugin metadata later
+            duration_sec: c.duration_sec,
+            mini_render: c.mini_render,
+            mini_text: read_c_str(&c.mini_text),
+            created_at: std::time::Instant::now(),
+            expanded_started_at: None,
+            collapsed_at: None,
+            mini_timeout_start: None,
+        }
+    }
 }

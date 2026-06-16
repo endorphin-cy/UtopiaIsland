@@ -147,6 +147,18 @@ impl NativePlugin {
         // SAFETY: vtable was validated on construction and is 'static in the DLL.
         unsafe { &*self.vtable }
     }
+
+    /// Give this plugin a pointer to the host API table.
+    pub fn set_host_api(&self, api: super::types::HostApiC) {
+        if let Some(f) = self.vtable().set_host_api {
+            unsafe { (f)(self.handle, &api as *const _) };
+        }
+    }
+
+    /// Raw handle pointer value, used as a key in plugin→id mapping.
+    pub fn handle_raw(&self) -> isize {
+        self.handle as isize
+    }
 }
 
 impl Plugin for NativePlugin {
