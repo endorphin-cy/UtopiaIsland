@@ -78,6 +78,21 @@ impl PluginType {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Priority constants
+// ---------------------------------------------------------------------------
+
+/// Playback — media players, podcasts, videos (lowest).
+pub const PRIORITY_LOW: u32 = 0;
+/// Activity — ongoing short-lived activities like timers, screen recording.
+pub const PRIORITY_MEDIUM: u32 = 1;
+/// Alert — notifications that need immediate attention (highest).
+pub const PRIORITY_HIGH: u32 = 2;
+
+// ---------------------------------------------------------------------------
+// Result type
+// ---------------------------------------------------------------------------
+
 /// The return type for fallible plugin host calls.
 ///
 /// This is a C-compatible equivalent of `Result<(), String>`.
@@ -120,6 +135,10 @@ impl PluginResultC {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
 /// Fill a fixed-size byte buffer with a string, zeroing the rest.
 ///
 /// Useful for initialising `#[repr(C)]` struct fields with a
@@ -137,6 +156,10 @@ pub fn str_to_fixed<const N: usize>(s: &str) -> [u8; N] {
     buf[..len].copy_from_slice(&s.as_bytes()[..len]);
     buf
 }
+
+// ---------------------------------------------------------------------------
+// Core ABI types
+// ---------------------------------------------------------------------------
 
 /// Fixed-width plugin metadata exchanged over FFI.
 ///
@@ -225,6 +248,72 @@ pub struct ShortcutC {
     pub hotkey: [u8; 32],
 }
 
+// ---------------------------------------------------------------------------
+// Context (push-based) types — added in 0.2
+// ---------------------------------------------------------------------------
+
+/// Context data sent by a plugin to display on the Dynamic Island.
+#[repr(C)]
+pub struct ContextDataC {
+    /// Priority: [`PRIORITY_LOW`], [`PRIORITY_MEDIUM`], [`PRIORITY_HIGH`].
+    /// Defaults to `PRIORITY_MEDIUM` when zero.
+    pub priority: u32,
+    /// Title text shown in mini and expanded views. Max 255 bytes + NUL.
+    pub title: [u8; 256],
+    /// Expanded body text. Max 511 bytes + NUL.
+    pub body: [u8; 512],
+    /// How many seconds the expanded view stays open before collapsing.
+    pub duration_sec: u32,
+    /// Whether to show a mini summary after collapsing.
+    pub mini_render: bool,
+    /// Mini summary text (used when `mini_render` is true). Max 127 bytes + NUL.
+    pub mini_text: [u8; 128],
+}
+
+/// Opaque context identifier returned by `send_context`.
+#[repr(C)]
+pub struct ContextIdC {
+    /// Encoded as `"plugin_id:uuid"`. Max 127 bytes + NUL.
+    pub id: [u8; 128],
+}
+
+/// Snapshot of the current host state that a plugin can query.
+#[repr(C)]
+pub struct HostStateC {
+    /// Currently playing media title. Max 255 bytes + NUL.
+    pub media_title: [u8; 256],
+    /// Currently playing media artist. Max 255 bytes + NUL.
+    pub media_artist: [u8; 256],
+    /// Whether media is currently playing.
+    pub is_playing: bool,
+    /// Current theme: `"light"` or `"dark"`. Max 31 bytes + NUL.
+    pub theme: [u8; 32],
+}
+
+/// Host-side API table passed to plugins via [`PluginVTable::set_host_api`].
+///
+/// Plugins store this pointer during `set_host_api` and call through it
+/// whenever they need to interact with the host (push context, close context,
+/// query state). All functions are safe to call from any thread.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostApiC {
+    /// Push a new context to the Dynamic Island.
+    ///
+    /// Returns a [`ContextIdC`] that can be used later to close or update.
+    pub send_context: unsafe extern "C" fn(PluginHandle, ContextDataC) -> ContextIdC,
+
+    /// Close a previously sent context by its ID.
+    pub close_context: unsafe extern "C" fn(PluginHandle, *const c_char) -> PluginResultC,
+
+    /// Query the current host state.
+    pub query_host_state: unsafe extern "C" fn(PluginHandle) -> HostStateC,
+}
+
+// ---------------------------------------------------------------------------
+// Plugin vtable
+// ---------------------------------------------------------------------------
+
 /// Virtual function table that every plugin DLL must expose.
 ///
 /// This is the **core of the plugin ABI**: the host calls through these
@@ -294,6 +383,13 @@ pub struct PluginVTable {
     /// Required for [`PluginType::Shortcut`] plugins.
     pub execute_shortcut:
         Option<unsafe extern "C" fn(PluginHandle, id: *const c_char) -> PluginResultC>,
+
+    /// Give the plugin a pointer to the host API table.
+    ///
+    /// Called after `on_load`. The plugin should store this pointer
+    /// and use it to call `send_context`, `close_context`, etc.
+    /// May be `None` for plugins that don't need host interaction.
+    pub set_host_api: Option<unsafe extern "C" fn(PluginHandle, *const HostApiC)>,
 }
 
 /// The complete plugin instance returned by the DLL's entry point.
