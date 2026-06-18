@@ -357,14 +357,23 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
         let start = *cell.borrow();
         match start {
             Some(s) => {
-                let t = (s.elapsed().as_secs_f32() / 0.5).min(1.0);
+                let t = (s.elapsed().as_secs_f32() / 0.6).min(1.0);
                 if t >= 1.0 {
                     *cell.borrow_mut() = None;
                     (1.0_f32, 0.0_f32, false)
                 } else {
-                    let cos_val = (t * std::f32::consts::PI).cos();
-                    let sx = cos_val.abs().max(0.05);
-                    let blur = (1.0 - cos_val.abs()) * 10.0 * scale;
+                    let eased = if t < 0.5 {
+                        let t2 = t * 2.0;
+                        t2 * t2 * 0.5
+                    } else {
+                        let t2 = (t - 0.5) * 2.0;
+                        let c1 = 1.2_f32;
+                        0.5 + (1.0 + c1 * (t2 - 1.0).powi(2) + (t2 - 1.0).powi(3) * (c1 + 1.0))
+                            * 0.5
+                    };
+                    let cos_val = (eased * std::f32::consts::PI).cos();
+                    let sx = cos_val.abs().max(0.02);
+                    let blur = (1.0 - cos_val.abs()).powf(0.6) * 8.0 * scale;
                     (sx, blur, cos_val > 0.0)
                 }
             }
