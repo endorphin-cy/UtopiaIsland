@@ -11,6 +11,8 @@ pub enum ClickResult {
     CenterLink(usize),
     SourceButton(usize),
     AppItem(usize),
+    FolderSelect(usize),
+    FolderClear(usize),
 }
 
 fn in_rect(mx: f32, my: f32, x: f32, y: f32, w: f32, h: f32) -> bool {
@@ -60,6 +62,28 @@ pub fn hit_test(items: &[SettingsItem], mx: f32, my: f32, start_y: f32, width: f
                     }
                 }
             }
+            SettingsItem::RowFolderPicker {
+                clear_label,
+                current_path,
+                enabled,
+                ..
+            } if *enabled => {
+                let has_path = current_path.as_ref().is_some_and(|p| !p.is_empty());
+                let row_h = if has_path { 64.0 } else { ROW_HEIGHT };
+                let cy = y + row_h / 2.0;
+                let sel_w: f32 = 60.0;
+                let sel_x = CONTENT_PADDING + content_w - GROUP_INNER_PAD - sel_w;
+                if in_rect(mx, my, sel_x, cy - 13.0, sel_w, 26.0) {
+                    return ClickResult::FolderSelect(idx);
+                }
+                if clear_label.is_some() {
+                    let clr_w: f32 = 60.0;
+                    let clr_x = sel_x - clr_w - 6.0;
+                    if in_rect(mx, my, clr_x, cy - 13.0, clr_w, 26.0) {
+                        return ClickResult::FolderClear(idx);
+                    }
+                }
+            }
             SettingsItem::RowSourceSelect { enabled, .. } if *enabled => {
                 let cy = y + ROW_HEIGHT / 2.0;
                 let btn_x = CONTENT_PADDING + content_w - GROUP_INNER_PAD - POPUP_BTN_W;
@@ -73,6 +97,7 @@ pub fn hit_test(items: &[SettingsItem], mx: f32, my: f32, start_y: f32, width: f
             {
                 return ClickResult::AppItem(idx);
             }
+            SettingsItem::RowLabel { .. } => {}
             SettingsItem::CenterLink { .. }
                 if mx >= width / 2.0 - 100.0
                     && mx <= width / 2.0 + 100.0

@@ -22,6 +22,7 @@ pub const POPUP_ITEM_H: f32 = 28.0;
 pub const POPUP_MENU_R: f32 = 8.0;
 pub const POPUP_MENU_PAD: f32 = 4.0;
 
+#[derive(Clone)]
 pub enum SettingsItem {
     PageTitle {
         text: String,
@@ -46,6 +47,13 @@ pub enum SettingsItem {
         label: String,
         btn_label: String,
         reset_label: Option<String>,
+    },
+    RowFolderPicker {
+        label: String,
+        btn_label: String,
+        clear_label: Option<String>,
+        current_path: Option<String>,
+        enabled: bool,
     },
     RowSourceSelect {
         label: String,
@@ -72,6 +80,9 @@ pub enum SettingsItem {
     Spacer {
         height: f32,
     },
+    FontPreview {
+        has_custom_font: bool,
+    },
 }
 
 impl SettingsItem {
@@ -83,6 +94,14 @@ impl SettingsItem {
             SettingsItem::CenterLink { .. } => 40.0,
             SettingsItem::CenterText { .. } => 35.0,
             SettingsItem::Spacer { height } => *height,
+            SettingsItem::FontPreview { .. } => 70.0,
+            SettingsItem::RowFolderPicker { current_path, .. } => {
+                if current_path.as_ref().is_some_and(|p| !p.is_empty()) {
+                    64.0
+                } else {
+                    ROW_HEIGHT
+                }
+            }
             _ => ROW_HEIGHT,
         }
     }
@@ -93,6 +112,7 @@ impl SettingsItem {
             SettingsItem::RowStepper { .. }
                 | SettingsItem::RowSwitch { .. }
                 | SettingsItem::RowFontPicker { .. }
+                | SettingsItem::RowFolderPicker { .. }
                 | SettingsItem::RowSourceSelect { .. }
                 | SettingsItem::RowAppItem { .. }
                 | SettingsItem::RowLabel { .. }

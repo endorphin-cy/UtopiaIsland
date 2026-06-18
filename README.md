@@ -2,12 +2,6 @@
   <img src="resources/info-en.png" width="350" alt="">
 </p>
 
-<p align="center">
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust"></a>
-  <a href="https://www.microsoft.com/windows"><img src="https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"></a>
-  <img src="https://img.shields.io/badge/Code%20Quality-A%2B-brightgreen?style=for-the-badge" alt="Code Quality A+">
-</p>
-
 ## WinIsland
 
 English | [简体中文](./README-zh.md)
@@ -32,12 +26,29 @@ cd WinIsland
 cargo build --release
 ```
 
+## Smtc (Only Chinese)
+> [!WARNING]
+> 网易云，酷狗等国产音乐软件的smtc均无法读取正常的数据，与此相关的issue将会标记为重复。
+
+网易云修复方案：
+1. 确保网易云的设置的smtc选项关闭
+2. 下载并安装[BetterNCM](https://github.com/std-microblock/chromatic/releases/tag/1.3.4) (或者 [chromatic](https://github.com/std-microblock/chromatic) 不确定是否能用)
+3. 安装[Inflink-rs](https://github.com/apoint123/inflink-rs)插件
+4. 在BetterNCM的设置找到Inflink，打开smtc选项
+5. 体验你的WinIsland！😋
+
+其他音乐软件暂无替代方案
+等待更新适配
+
 ## Contributes 
 We encourage contributions
 
 If you have the energy or interest, PR are welcome
 
-And You should see [Contributing](./Docs/CONTRIBUTING.md)
+And You should see [Contributing](CONTRIBUTING.md)
+
+> [!IMPORTANT]
+> Any PRs not following the [Contributing Guidelines](CONTRIBUTING.md) will be closed.
 
 ## LICENCE
-[MIT](LICENSE)
+This project is subject to the [GNU General Public License v3.0](LICENSE).

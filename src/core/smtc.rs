@@ -8,6 +8,7 @@ use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
 };
+use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
 
 #[derive(Clone, Debug)]
 pub struct MediaInfo {
@@ -66,7 +67,8 @@ impl MediaInfo {
         }
 
         let raw_pos = if self.is_playing {
-            self.position_ms + self.last_update.elapsed().as_millis() as u64
+            self.position_ms
+                .saturating_add(self.last_update.elapsed().as_millis() as u64)
         } else {
             self.position_ms
         };
@@ -98,6 +100,7 @@ pub struct SmtcListener {
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
     lyrics_source_tx: mpsc::UnboundedSender<String>,
     lyrics_fallback_tx: mpsc::UnboundedSender<bool>,
+    lyrics_local_dir_tx: mpsc::UnboundedSender<Option<String>>,
     allowed_apps_tx: mpsc::UnboundedSender<Vec<String>>,
     cancel_token: CancellationToken,
 }
@@ -109,11 +112,13 @@ impl SmtcListener {
         let (playback_tx, playback_rx) = mpsc::unbounded_channel();
         let (lyrics_source_tx, lyrics_source_rx) = mpsc::unbounded_channel();
         let (lyrics_fallback_tx, lyrics_fallback_rx) = mpsc::unbounded_channel();
+        let (lyrics_local_dir_tx, lyrics_local_dir_rx) = mpsc::unbounded_channel();
         let (allowed_apps_tx, allowed_apps_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
         let _ = lyrics_source_tx.send(source);
         let _ = lyrics_fallback_tx.send(fallback);
+        let _ = lyrics_local_dir_tx.send(load_config().lyrics_local_dir);
         let _ = allowed_apps_tx.send(allowed);
 
         let cancel = cancel_token.clone();
@@ -124,6 +129,7 @@ impl SmtcListener {
                 playback_rx,
                 lyrics_source_rx,
                 lyrics_fallback_rx,
+                lyrics_local_dir_rx,
                 allowed_apps_rx,
                 cancel,
             );
@@ -135,6 +141,7 @@ impl SmtcListener {
             playback_tx,
             lyrics_source_tx,
             lyrics_fallback_tx,
+            lyrics_local_dir_tx,
             allowed_apps_tx,
             cancel_token,
         }
@@ -150,6 +157,10 @@ impl SmtcListener {
 
     pub fn set_lyrics_fallback(&self, fallback: bool) {
         let _ = self.lyrics_fallback_tx.send(fallback);
+    }
+
+    pub fn set_lyrics_local_dir(&self, dir: Option<String>) {
+        let _ = self.lyrics_local_dir_tx.send(dir);
     }
 
     pub fn get_info(&self) -> MediaInfo {
@@ -179,22 +190,49 @@ impl Drop for SmtcListener {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn smtc_poll_loop(
     info_tx: watch::Sender<MediaInfo>,
     mut seek_rx: mpsc::UnboundedReceiver<u64>,
     mut playback_rx: mpsc::UnboundedReceiver<PlaybackCommand>,
     mut lyrics_source_rx: mpsc::UnboundedReceiver<String>,
     mut lyrics_fallback_rx: mpsc::UnboundedReceiver<bool>,
+    mut lyrics_local_dir_rx: mpsc::UnboundedReceiver<Option<String>>,
     mut allowed_apps_rx: mpsc::UnboundedReceiver<Vec<String>>,
     cancel: CancellationToken,
 ) {
+    // SAFETY: CoInitializeEx initializes COM for this thread. We use
+    // COINIT_MULTITHREADED because tokio's spawn_blocking pool is MTA.
+    // If it fails (e.g. already initialized with a different mode), we
+    // skip creating the guard so CoUninitialize is not called unbalanced.
+    let com_initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok();
+    struct ComGuard;
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            // SAFETY: CoUninitialize balances the successful CoInitializeEx
+            // that triggered the creation of this guard.
+            unsafe { CoUninitialize() };
+        }
+    }
+    let _com_guard = com_initialized.then_some(ComGuard);
+
     let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
         Ok(op) => match op.get() {
             Ok(m) => m,
-            Err(_) => return,
+            Err(_) => {
+                log::error!("SMTC: failed to get session manager");
+                return;
+            }
         },
-        Err(_) => return,
+        Err(_) => {
+            log::error!("SMTC: RequestAsync failed");
+            return;
+        }
     };
+    log::info!(
+        "SMTC: session manager created (COM initialized: {})",
+        com_initialized
+    );
 
     // COM event bridge: COM callback -> std::sync::mpsc -> polling loop
     let (event_tx, event_rx) = std::sync::mpsc::channel::<()>();
@@ -209,6 +247,7 @@ fn smtc_poll_loop(
     // Local state mirrored from channels
     let mut current_lyrics_source: String = "163".to_string();
     let mut current_lyrics_fallback: bool = true;
+    let mut current_lyrics_local_dir: Option<String> = None;
     let mut current_allowed_apps: Vec<String> = Vec::new();
 
     // Drain initial config values from channels
@@ -218,21 +257,54 @@ fn smtc_poll_loop(
     while let Ok(fb) = lyrics_fallback_rx.try_recv() {
         current_lyrics_fallback = fb;
     }
+    while let Ok(dir) = lyrics_local_dir_rx.try_recv() {
+        current_lyrics_local_dir = dir;
+    }
     while let Ok(apps) = allowed_apps_rx.try_recv() {
         current_allowed_apps = apps;
     }
 
-    // Initial update
-    update_media_info(
-        &manager,
-        &info_tx,
-        &current_lyrics_source,
-        current_lyrics_fallback,
-        &mut current_allowed_apps,
-    );
+    let mut last_session_seen = Instant::now();
+    let mut last_was_playing = false;
+
+    // Initial update with retries for SMTC timeline readiness.
+    // Some music apps (Spotify, Netease) take 1-2s to populate
+    // TimelineProperties after session creation, so we retry up
+    // to 2 seconds (10 × 200ms).
+    for attempt in 0..10 {
+        update_media_info(
+            &manager,
+            &info_tx,
+            &current_lyrics_source,
+            current_lyrics_fallback,
+            current_lyrics_local_dir.as_deref(),
+            &mut current_allowed_apps,
+            true,
+            &mut last_session_seen,
+            &mut last_was_playing,
+        );
+        let info = info_tx.borrow();
+        let timeline_ready = info.duration_ms > 0
+            || info.position_ms > 0
+            || !info.is_playing
+            || info.title.is_empty();
+        if timeline_ready {
+            if attempt > 0 {
+                log::info!("SMTC: initial timeline ready after {} retries", attempt + 1);
+            }
+            drop(info);
+            break;
+        }
+        drop(info);
+        if attempt < 9 {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
 
     let mut last_manager_refresh = Instant::now();
     let mut current_manager = manager;
+    let mut last_regular_update = Instant::now();
+    let mut regular_poll_count = 0u32;
 
     while !cancel.is_cancelled() {
         // Refresh manager every 30 seconds
@@ -243,6 +315,7 @@ fn smtc_poll_loop(
                 current_manager = new_mgr;
                 let _ = current_manager.SessionsChanged(&handler);
             }
+            log::info!("SMTC: manager refreshed (30s interval)");
             last_manager_refresh = Instant::now();
         }
 
@@ -259,10 +332,12 @@ fn smtc_poll_loop(
                     let src = current_lyrics_source.clone();
                     let fb = current_lyrics_fallback;
                     let info_tx_clone = info_tx.clone();
+                    let local_dir = current_lyrics_local_dir.clone();
                     drop(info);
                     tokio::spawn(async move {
                         if let Some(lyrics) =
-                            fetch_lyrics(&title, &artist, duration, &src, fb).await
+                            fetch_lyrics(&title, &artist, duration, &src, fb, local_dir.as_deref())
+                                .await
                         {
                             let current = info_tx_clone.borrow();
                             if current.title == title && current.artist == artist {
@@ -279,6 +354,37 @@ fn smtc_poll_loop(
         while let Ok(fb) = lyrics_fallback_rx.try_recv() {
             current_lyrics_fallback = fb;
         }
+        while let Ok(dir) = lyrics_local_dir_rx.try_recv() {
+            if dir != current_lyrics_local_dir {
+                current_lyrics_local_dir = dir;
+                // Re-fetch lyrics for current song when local dir changes
+                let info = info_tx.borrow();
+                if !info.title.is_empty() {
+                    let title = info.title.clone();
+                    let artist = info.artist.clone();
+                    let duration = info.duration_secs;
+                    let src = current_lyrics_source.clone();
+                    let fb = current_lyrics_fallback;
+                    let info_tx_clone = info_tx.clone();
+                    let local_dir = current_lyrics_local_dir.clone();
+                    drop(info);
+                    tokio::spawn(async move {
+                        if let Some(lyrics) =
+                            fetch_lyrics(&title, &artist, duration, &src, fb, local_dir.as_deref())
+                                .await
+                        {
+                            let current = info_tx_clone.borrow();
+                            if current.title == title && current.artist == artist {
+                                drop(current);
+                                let mut new_info = info_tx_clone.borrow().clone();
+                                new_info.lyrics = Some(lyrics);
+                                let _ = info_tx_clone.send(new_info);
+                            }
+                        }
+                    });
+                }
+            }
+        }
         while let Ok(apps) = allowed_apps_rx.try_recv() {
             current_allowed_apps = apps;
         }
@@ -291,6 +397,7 @@ fn smtc_poll_loop(
         if let Some(seek_pos) = seek_pos
             && let Some(session) = get_target_session(&current_manager, &current_allowed_apps)
         {
+            log::info!("SMTC: seek to {}ms", seek_pos);
             let ticks = seek_pos as i64 * 10_000;
             let _ = session.TryChangePlaybackPositionAsync(ticks);
             let mut info = info_tx.borrow().clone();
@@ -303,6 +410,7 @@ fn smtc_poll_loop(
 
         // Handle playback commands
         while let Ok(cmd) = playback_rx.try_recv() {
+            log::info!("SMTC: playback command {:?}", cmd);
             if let Some(session) = get_target_session(&current_manager, &current_allowed_apps) {
                 match cmd {
                     PlaybackCommand::Toggle => {
@@ -326,46 +434,82 @@ fn smtc_poll_loop(
             }
         }
 
-        // Check COM events
+        // Check COM events — when triggered, immediately update and reset the regular timer
         if event_rx.try_recv().is_ok() {
+            log::info!("SMTC: session change event received, updating immediately");
             update_media_info(
                 &current_manager,
                 &info_tx,
                 &current_lyrics_source,
                 current_lyrics_fallback,
+                current_lyrics_local_dir.as_deref(),
                 &mut current_allowed_apps,
+                true,
+                &mut last_session_seen,
+                &mut last_was_playing,
             );
+            last_regular_update = Instant::now();
         }
 
-        // Regular update
-        update_media_info(
-            &current_manager,
-            &info_tx,
-            &current_lyrics_source,
-            current_lyrics_fallback,
-            &mut current_allowed_apps,
-        );
+        // Regular update — only if last update was > 300ms ago
+        if last_regular_update.elapsed() > Duration::from_millis(300) {
+            // Periodically run auto_allow as a safety net: every 10th poll (~3s)
+            // in case COM session-change events were missed (e.g. handler lost
+            // during manager refresh).
+            regular_poll_count += 1;
+            let do_auto_allow = regular_poll_count.is_multiple_of(10);
+            update_media_info(
+                &current_manager,
+                &info_tx,
+                &current_lyrics_source,
+                current_lyrics_fallback,
+                current_lyrics_local_dir.as_deref(),
+                &mut current_allowed_apps,
+                do_auto_allow,
+                &mut last_session_seen,
+                &mut last_was_playing,
+            );
+            last_regular_update = Instant::now();
+        }
 
         std::thread::sleep(Duration::from_millis(300));
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_media_info(
     manager: &GlobalSystemMediaTransportControlsSessionManager,
     info_tx: &watch::Sender<MediaInfo>,
     lyrics_source: &str,
     lyrics_fallback: bool,
+    local_dir: Option<&str>,
     allowed_apps: &mut Vec<String>,
+    auto_allow: bool,
+    last_session_seen: &mut Instant,
+    last_was_playing: &mut bool,
 ) {
-    *allowed_apps = auto_allow_new_apps(manager, allowed_apps);
+    if auto_allow {
+        *allowed_apps = auto_allow_new_apps(manager, allowed_apps);
+    }
 
     if let Some(session) = get_target_session(manager, allowed_apps) {
-        let _ = fetch_properties(&session, info_tx, lyrics_source, lyrics_fallback);
-    } else {
+        *last_session_seen = Instant::now();
+        let _ = fetch_properties(&session, info_tx, lyrics_source, lyrics_fallback, local_dir);
+        *last_was_playing = info_tx.borrow().is_playing;
+    } else if *last_was_playing {
         let info = info_tx.borrow();
         if !info.title.is_empty() {
             drop(info);
             let _ = info_tx.send(MediaInfo::default());
+            log::info!("SMTC: app closed while playing, cleared immediately");
+        }
+        *last_was_playing = false;
+    } else if last_session_seen.elapsed() > Duration::from_secs(15) {
+        let info = info_tx.borrow();
+        if !info.title.is_empty() {
+            drop(info);
+            let _ = info_tx.send(MediaInfo::default());
+            log::info!("SMTC: paused session lost for >15s, cleared media info");
         }
     }
 }
@@ -375,6 +519,7 @@ fn auto_allow_new_apps(
     allowed: &[String],
 ) -> Vec<String> {
     let mut new_allowed = allowed.to_vec();
+    let mut new_app_ids: Vec<String> = Vec::new();
     if let Ok(sessions) = mgr.GetSessions()
         && let Ok(count) = sessions.Size()
     {
@@ -387,28 +532,40 @@ fn auto_allow_new_apps(
                 && let Ok(id) = session.SourceAppUserModelId()
             {
                 let app_id = id.to_string();
-                let mut config = load_config();
-                let mut changed = false;
-
-                if !config.smtc_known_apps.contains(&app_id) {
-                    let is_first_run = config.smtc_known_apps.is_empty();
-                    config.smtc_known_apps.push(app_id.clone());
-
-                    if is_first_run && !config.smtc_apps.contains(&app_id) {
-                        config.smtc_apps.push(app_id.clone());
-                        if !new_allowed.contains(&app_id) {
-                            new_allowed.push(app_id);
-                        }
-                    }
-                    changed = true;
-                }
-
-                if changed {
-                    save_config(&config);
+                if !new_app_ids.contains(&app_id) {
+                    new_app_ids.push(app_id);
                 }
             }
         }
     }
+
+    if new_app_ids.is_empty() {
+        return new_allowed;
+    }
+
+    let mut config = load_config();
+    let mut changed = false;
+
+    for app_id in &new_app_ids {
+        if !config.smtc_known_apps.contains(app_id) {
+            let is_first_run = config.smtc_known_apps.is_empty();
+            config.smtc_known_apps.push(app_id.clone());
+
+            if is_first_run && !config.smtc_apps.contains(app_id) {
+                config.smtc_apps.push(app_id.clone());
+                if !new_allowed.contains(app_id) {
+                    new_allowed.push(app_id.clone());
+                }
+            }
+            changed = true;
+        }
+    }
+
+    if changed {
+        save_config(&config);
+        log::info!("SMTC: auto-allowed new session(s): {:?}", new_app_ids);
+    }
+
     new_allowed
 }
 
@@ -482,6 +639,7 @@ fn fetch_properties(
     info_tx: &watch::Sender<MediaInfo>,
     lyrics_source: &str,
     lyrics_fallback: bool,
+    local_dir: Option<&str>,
 ) -> windows::core::Result<()> {
     if !is_music_session(session) {
         let info = info_tx.borrow();
@@ -544,6 +702,12 @@ fn fetch_properties(
         let song_changed =
             info.title != new_title || info.artist != new_artist || info.album != new_album;
         if song_changed {
+            log::info!(
+                "SMTC: track changed -> {} - {} / {}",
+                new_title,
+                new_artist,
+                new_album
+            );
             info.title = new_title.clone();
             info.artist = new_artist.clone();
             info.album = new_album.clone();
@@ -552,7 +716,9 @@ fn fetch_properties(
             info.lyrics = None;
             info.thumbnail = None;
             info.thumbnail_hash = 0;
-            info.position_ms = smtc_pos;
+            if smtc_pos > 0 {
+                info.position_ms = smtc_pos;
+            }
             info.last_smtc_pos = smtc_pos;
             info.last_update = Instant::now();
             info.last_thumbnail_fetch = Instant::now();
@@ -568,7 +734,8 @@ fn fetch_properties(
             should_fetch_thumbnail = true;
         }
         let current_extrapolated = if info.is_playing {
-            info.position_ms + info.last_update.elapsed().as_millis() as u64
+            info.position_ms
+                .saturating_add(info.last_update.elapsed().as_millis() as u64)
         } else {
             info.position_ms
         };
@@ -582,12 +749,21 @@ fn fetch_properties(
             || (smtc_changed && (diff_with_extrapolated > 2000 || !is_playing));
 
         if should_sync {
-            info.position_ms = smtc_pos;
+            if smtc_pos > 0 || !song_changed {
+                info.position_ms = smtc_pos;
+            }
             info.last_update = Instant::now();
         }
 
+        let was_playing = info.is_playing;
         info.last_smtc_pos = smtc_pos;
         info.is_playing = is_playing;
+        if !song_changed && was_playing != is_playing {
+            log::info!(
+                "SMTC: playback state -> {}",
+                if is_playing { "Playing" } else { "Paused" }
+            );
+        }
         info.duration_secs = duration_secs;
         info.duration_ms = duration_ms_from_tl;
         let _ = info_tx.send(info);
@@ -598,10 +774,24 @@ fn fetch_properties(
         let session_clone = session.clone();
         let title_clone = new_title.clone();
         let artist_clone = new_artist.clone();
+        let is_song_change = should_fetch_lyrics;
         tokio::task::spawn_blocking(move || {
-            for _ in 0..10 {
-                let res = (|| -> windows::core::Result<Vec<u8>> {
+            if is_song_change {
+                std::thread::sleep(Duration::from_millis(800));
+            }
+            for attempt in 0..10 {
+                let res = (|| -> windows::core::Result<(String, String, Vec<u8>)> {
                     let props = session_clone.TryGetMediaPropertiesAsync()?.get()?;
+                    let fetched_title = props.Title()?.to_string();
+                    let fetched_artist = props.Artist()?.to_string();
+                    if fetched_title != title_clone || fetched_artist != artist_clone {
+                        // HRESULT(-2) is a sentinel value to signal stale media properties,
+                        // not a standard COM error code. The caller retries on this error.
+                        return Err(windows::core::Error::new(
+                            windows::core::HRESULT(-2),
+                            "Stale properties",
+                        ));
+                    }
                     let thumb_ref = props.Thumbnail()?;
                     let stream = thumb_ref.OpenReadAsync()?.get()?;
                     let size = stream.Size()?;
@@ -622,10 +812,10 @@ fn fetch_properties(
                     let reader = windows::Storage::Streams::DataReader::FromBuffer(&res_buffer)?;
                     let mut bytes = vec![0u8; size as usize];
                     reader.ReadBytes(&mut bytes)?;
-                    Ok(bytes)
+                    Ok((fetched_title, fetched_artist, bytes))
                 })();
 
-                if let Ok(bytes) = res {
+                if let Ok((_t, _a, bytes)) = res {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
@@ -639,14 +829,25 @@ fn fetch_properties(
                     {
                         drop(current);
                         let mut new_info = info_tx_clone.borrow().clone();
-                        new_info.thumbnail = Some(Arc::new(bytes));
+                        new_info.thumbnail = Some(Arc::new(bytes.clone()));
                         new_info.thumbnail_hash = hash;
                         let _ = info_tx_clone.send(new_info);
+                        log::info!(
+                            "SMTC: thumbnail fetched ({} bytes, hash={:#x})",
+                            bytes.len(),
+                            hash
+                        );
                     }
                     return;
                 }
-                std::thread::sleep(Duration::from_millis(500));
+                let delay = if attempt < 3 { 300 } else { 500 };
+                std::thread::sleep(Duration::from_millis(delay));
             }
+            log::warn!(
+                "SMTC: thumbnail fetch failed for '{}' - '{}' after 10 attempts",
+                title_clone,
+                artist_clone
+            );
         });
     }
 
@@ -656,14 +857,34 @@ fn fetch_properties(
         let artist = new_artist.clone();
         let src = lyrics_source.to_string();
         let fb = lyrics_fallback;
+        let local_dir = local_dir.map(|s| s.to_string());
         tokio::spawn(async move {
-            if let Some(lyrics) = fetch_lyrics(&title, &artist, duration_secs, &src, fb).await {
-                let current = info_tx_clone.borrow();
-                if current.title == title && current.artist == artist {
-                    drop(current);
-                    let mut new_info = info_tx_clone.borrow().clone();
-                    new_info.lyrics = Some(lyrics);
-                    let _ = info_tx_clone.send(new_info);
+            let lyrics = fetch_lyrics(
+                &title,
+                &artist,
+                duration_secs,
+                &src,
+                fb,
+                local_dir.as_deref(),
+            )
+            .await;
+            match lyrics {
+                Some(lyrics) => {
+                    log::info!("SMTC: lyrics fetched ({} lines from {})", lyrics.len(), src);
+                    let current = info_tx_clone.borrow();
+                    if current.title == title && current.artist == artist {
+                        drop(current);
+                        let mut new_info = info_tx_clone.borrow().clone();
+                        new_info.lyrics = Some(lyrics);
+                        let _ = info_tx_clone.send(new_info);
+                    }
+                }
+                None => {
+                    log::warn!(
+                        "SMTC: lyrics fetch returned none for '{}' - '{}'",
+                        title,
+                        artist
+                    );
                 }
             }
         });

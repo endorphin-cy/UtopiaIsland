@@ -1,3 +1,9 @@
 /target
 .idea/
 /.claude/
+/.planning/
+/.trae/
+/my-winisland-plugin/
+Page/node_modules/
+Page/.vitepress/cache
+Page/package-lock.json

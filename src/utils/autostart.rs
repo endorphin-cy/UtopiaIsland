@@ -17,6 +17,9 @@ pub fn set_autostart(enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
             .chain(std::iter::once(0))
             .collect();
 
+        // SAFETY: RegCreateKeyExW and RegSetValueExW write to HKEY_CURRENT_USER\Run.
+        // The key path is a static string literal. The value data pointer points to
+        // a valid null-terminated UTF-16 buffer. RegCloseKey properly closes the handle.
         unsafe {
             let mut hkey = HKEY::default();
             let res = RegCreateKeyExW(
@@ -43,9 +46,15 @@ pub fn set_autostart(enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
                     )),
                 );
                 let _ = RegCloseKey(hkey);
+                log::info!("Autostart: enabled ({})", exe_path_str);
+            } else {
+                log::error!("Autostart: RegCreateKeyExW failed: {:?}", res);
             }
         }
     } else {
+        // SAFETY: RegCreateKeyExW opens HKEY_CURRENT_USER\Run for deletion.
+        // The key path is a static string literal. RegDeleteValueW removes the
+        // WinIsland value. RegCloseKey properly closes the handle.
         unsafe {
             let mut hkey = HKEY::default();
             if RegCreateKeyExW(
@@ -63,6 +72,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
             {
                 let _ = RegDeleteValueW(hkey, app_name);
                 let _ = RegCloseKey(hkey);
+                log::info!("Autostart: disabled");
             }
         }
     }
