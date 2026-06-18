@@ -207,6 +207,12 @@ pub fn draw_island(
             paint.set_anti_alias(true);
             let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
             canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
+
+            let mut darken = Paint::default();
+            darken.set_color(Color::from_argb(130, 10, 10, 14));
+            darken.set_anti_alias(true);
+            darken.set_blend_mode(skia_safe::BlendMode::Multiply);
+            canvas.draw_rect(rect, &darken);
         } else {
             let mut bg_paint = Paint::default();
             bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
@@ -216,15 +222,41 @@ pub fn draw_island(
     } else if island_style == "dynamic" {
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-        if let Some((img, cache_key)) = get_cached_media_image_with_key(media) {
-            bg_color = get_dynamic_bg_color(&img, &cache_key);
-        } else if let Some(last_color) = get_last_valid_color() {
-            bg_color = last_color;
+        let screen_x = win_x + offset_x as i32;
+        let screen_y = win_y + offset_y as i32;
+        if let Some(bg_img) = get_glass_background(
+            screen_x,
+            screen_y,
+            current_w as u32,
+            current_h as u32,
+            40.0 * global_scale,
+        ) {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+            canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
+
+            if let Some((img, cache_key)) = get_cached_media_image_with_key(media) {
+                bg_color = get_dynamic_bg_color(&img, &cache_key);
+            } else if let Some(last_color) = get_last_valid_color() {
+                bg_color = last_color;
+            }
+
+            let mut tint = Paint::default();
+            tint.set_color(bg_color);
+            tint.set_anti_alias(true);
+            canvas.draw_rect(rect, &tint);
+        } else {
+            if let Some((img, cache_key)) = get_cached_media_image_with_key(media) {
+                bg_color = get_dynamic_bg_color(&img, &cache_key);
+            } else if let Some(last_color) = get_last_valid_color() {
+                bg_color = last_color;
+            }
+            let mut bg_paint = Paint::default();
+            bg_paint.set_color(bg_color);
+            bg_paint.set_anti_alias(true);
+            canvas.draw_rrect(rrect, &bg_paint);
         }
-        let mut bg_paint = Paint::default();
-        bg_paint.set_color(bg_color);
-        bg_paint.set_anti_alias(true);
-        canvas.draw_rrect(rrect, &bg_paint);
     } else {
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);

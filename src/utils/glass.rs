@@ -1,6 +1,5 @@
 use skia_safe::{
-    AlphaType, Color, ColorType, Data, ISize, Image, ImageInfo, Paint, image_filters, images,
-    surfaces,
+    AlphaType, ColorType, Data, ISize, Image, ImageInfo, Paint, image_filters, images, surfaces,
 };
 use std::cell::RefCell;
 use std::time::Instant;
@@ -37,7 +36,7 @@ pub fn get_glass_background(
     let cached = GLASS_CACHE.with(|cell| {
         let cache = cell.borrow();
         if let Some((img, time, cx, cy, cw, ch)) = cache.as_ref()
-            && time.elapsed().as_millis() < 500
+            && time.elapsed().as_millis() < 100
             && *cx == screen_x
             && *cy == screen_y
             && *cw == w
@@ -101,6 +100,11 @@ unsafe fn capture_and_blur(sx: i32, sy: i32, w: u32, h: u32, blur_sigma: f32) ->
         }
         let old = SelectObject(hdc_mem, hbm);
 
+        let capture_offset_y = if sy > 500 {
+            -(h as i32 + margin + 10)
+        } else {
+            h as i32 + margin + 10
+        };
         let _ = SetStretchBltMode(hdc_mem, STRETCH_BLT_MODE(HALFTONE.0));
         let _ = StretchBlt(
             hdc_mem,
@@ -110,7 +114,7 @@ unsafe fn capture_and_blur(sx: i32, sy: i32, w: u32, h: u32, blur_sigma: f32) ->
             cap_h,
             hdc_screen,
             sx - margin,
-            sy - margin,
+            sy - margin + capture_offset_y,
             cap_full_w,
             cap_full_h,
             SRCCOPY,
@@ -173,15 +177,6 @@ unsafe fn capture_and_blur(sx: i32, sy: i32, w: u32, h: u32, blur_sigma: f32) ->
         let mut final_surface = surfaces::raster_n32_premul(ISize::new(crop_w, crop_h))?;
         let final_canvas = final_surface.canvas();
         final_canvas.draw_image(&blurred, (-crop_x, -crop_y), None);
-
-        // Blend with a very dark base to guarantee the signature black glass
-        // look even when WDA_EXCLUDEFROMCAPTURE doesn't fully black out the
-        // island area on the current system.
-        let mut darken = Paint::default();
-        darken.set_color(Color::from_argb(195, 8, 8, 12));
-        darken.set_anti_alias(true);
-        darken.set_blend_mode(skia_safe::BlendMode::Multiply);
-        final_canvas.draw_paint(&darken);
 
         Some(final_surface.image_snapshot())
     }
