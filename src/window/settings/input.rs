@@ -261,9 +261,7 @@ impl SettingsApp {
                             self.config.audio_gate = !self.config.audio_gate;
                         }
                         l if l == tr("auto_gate") => self.config.auto_gate = !self.config.auto_gate,
-                        l if l == tr("mini_controls") => {
-                            self.config.mini_controls = !self.config.mini_controls
-                        }
+
                         l if l == tr("start_boot") => {
                             self.config.auto_start = !self.config.auto_start;
                             let _ = set_autostart(self.config.auto_start);
@@ -420,7 +418,6 @@ impl SettingsApp {
                     self.config.cover_rotate,
                     self.config.audio_gate,
                     self.config.auto_gate,
-                    self.config.mini_controls,
                     self.config.auto_start,
                     self.config.auto_hide,
                     self.config.check_for_updates,

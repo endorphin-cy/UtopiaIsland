@@ -2,7 +2,7 @@ use crate::core::audio::AudioProcessor;
 use crate::core::config::{AppConfig, PADDING, TOP_OFFSET, WINDOW_TITLE};
 use crate::core::context::ContextManager;
 use crate::core::persistence::load_config;
-use crate::core::render::{draw_island, get_mini_control_rects};
+use crate::core::render::draw_island;
 use crate::core::smtc::SmtcListener;
 use crate::plugin::PluginManager;
 use crate::plugin::zip_loader;
@@ -553,65 +553,11 @@ impl App {
                 self.expanded = false;
                 self.widget_view = false;
             }
-        } else {
-            let media = self.smtc.get_info();
-            let music_on = self.config.smtc_enabled && !media.title.is_empty();
-
-            if music_on && !media.is_playing && self.config.mini_controls {
-                let w = self.spring_w.value;
-                let h = self.spring_h.value;
-                let (prev_rect, play_rect, next_rect) = get_mini_control_rects(
-                    offset_x as f32,
-                    current_island_y as f32,
-                    w,
-                    h,
-                    self.config.global_scale,
-                );
-
-                let cx = rel_x as f32;
-                let cy = rel_y as f32;
-
-                let mut hit_control = false;
-                if let Some((px, py, pw, ph)) = prev_rect
-                    && cx >= px
-                    && cx <= px + pw
-                    && cy >= py
-                    && cy <= py + ph
-                {
-                    self.smtc.request_prev();
-                    hit_control = true;
-                }
-                if !hit_control
-                    && let Some((px, py, pw, ph)) = play_rect
-                    && cx >= px
-                    && cx <= px + pw
-                    && cy >= py
-                    && cy <= py + ph
-                {
-                    self.smtc.request_toggle_play();
-                    hit_control = true;
-                }
-                if !hit_control
-                    && let Some((px, py, pw, ph)) = next_rect
-                    && cx >= px
-                    && cx <= px + pw
-                    && cy >= py
-                    && cy <= py + ph
-                {
-                    self.smtc.request_next();
-                    hit_control = true;
-                }
-                if hit_control {
-                    return;
-                }
-            }
-
-            if is_hovering_visible || is_on_hidden_handle {
-                self.is_dragging = true;
-                self.drag_start_py = rel_y + self.win_y;
-                self.drag_start_hide_val = self.spring_hide.value;
-                self.drag_has_moved = false;
-            }
+        } else if is_hovering_visible || is_on_hidden_handle {
+            self.is_dragging = true;
+            self.drag_start_py = rel_y + self.win_y;
+            self.drag_start_hide_val = self.spring_hide.value;
+            self.drag_has_moved = false;
         }
     }
 
@@ -1165,7 +1111,6 @@ impl ApplicationHandler for App {
                                     mini_cover_shape: &self.config.mini_cover_shape,
                                     expanded_cover_shape: &self.config.expanded_cover_shape,
                                     cover_rotate: self.config.cover_rotate,
-                                    mini_controls: self.config.mini_controls,
                                     lyrics_delay: self.config.lyrics_delay,
                                     dt,
                                 },

@@ -1,6 +1,5 @@
 use crate::core::config::{DockPosition, PADDING, TOP_OFFSET};
 use crate::core::smtc::MediaInfo;
-use crate::icons::controls::draw_play_button;
 use crate::ui::expanded::music_view::{
     DrawMusicPageParams, DrawVisualizerParams, draw_music_page, draw_text_cached, draw_visualizer,
     get_cached_media_image, get_cached_media_image_with_key, get_media_palette,
@@ -70,7 +69,7 @@ pub struct StyleParams<'a> {
     pub mini_cover_shape: &'a str,
     pub expanded_cover_shape: &'a str,
     pub cover_rotate: bool,
-    pub mini_controls: bool,
+
     pub lyrics_delay: f64,
     pub dt: f32,
 }
@@ -131,7 +130,7 @@ pub fn draw_island(
         mini_cover_shape: _,
         expanded_cover_shape: _,
         cover_rotate: _,
-        mini_controls: _,
+
         lyrics_delay,
         dt,
     } = style;
@@ -412,26 +411,7 @@ pub fn draw_island(
                     smooth_factors: (0.6, 0.08),
                 });
 
-                let is_paused = music_active && !media.is_playing && style.mini_controls;
-
-                if is_paused {
-                    let lyric_fade_f = (1.0 - expansion_progress * 2.5).clamp(0.0, 1.0);
-                    let ctrl_alpha = (alpha as f32 * lyric_fade_f) as u8;
-
-                    if ctrl_alpha > 0 {
-                        let space_left = offset_x + 30.0 * global_scale;
-                        let space_right = offset_x + current_w - 29.0 * global_scale;
-                        let center_x = (space_left + space_right) / 2.0;
-                        let center_y = offset_y + current_h / 2.0;
-
-                        let btn_scale = 0.28 * global_scale;
-
-                        canvas.save();
-                        canvas.translate((center_x, center_y));
-                        draw_play_button(canvas, 0.0, 0.0, ctrl_alpha, btn_scale, text_color);
-                        canvas.restore();
-                    }
-                } else if !current_lyric.is_empty() || !old_lyric.is_empty() {
+                if !current_lyric.is_empty() || !old_lyric.is_empty() {
                     let lyric_fade_f = (1.0 - expansion_progress * 2.5).clamp(0.0, 1.0);
                     let alpha = (alpha as f32 * lyric_fade_f) as u8;
 
@@ -710,34 +690,4 @@ pub fn draw_island(
     }
 
     widget_animating
-}
-
-#[allow(clippy::type_complexity)]
-pub fn get_mini_control_rects(
-    offset_x: f32,
-    offset_y: f32,
-    current_w: f32,
-    current_h: f32,
-    global_scale: f32,
-) -> (
-    Option<(f32, f32, f32, f32)>,
-    Option<(f32, f32, f32, f32)>,
-    Option<(f32, f32, f32, f32)>,
-) {
-    let space_left = offset_x + 30.0 * global_scale;
-    let space_right = offset_x + current_w - 29.0 * global_scale;
-    let center_x = (space_left + space_right) / 2.0;
-    let center_y = offset_y + current_h / 2.0;
-
-    let hit_size = 20.0 * global_scale;
-
-    let play_rect = (
-        center_x - hit_size / 2.0,
-        center_y - hit_size / 2.0,
-        hit_size,
-        hit_size,
-    );
-
-    // Only the play/pause button is rendered; prev/next are invisible.
-    (None, Some(play_rect), None)
 }

@@ -145,8 +145,6 @@ pub struct AppConfig {
     pub audio_gate: bool,
     #[serde(default = "default_auto_gate")]
     pub auto_gate: bool,
-    #[serde(default = "default_mini_controls")]
-    pub mini_controls: bool,
 }
 
 fn default_island_style() -> String {
@@ -257,10 +255,6 @@ fn default_auto_gate() -> bool {
     true
 }
 
-fn default_mini_controls() -> bool {
-    false
-}
-
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -300,7 +294,6 @@ impl Default for AppConfig {
             cover_rotate: false,
             audio_gate: true,
             auto_gate: true,
-            mini_controls: false,
         }
     }
 }
