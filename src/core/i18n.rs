@@ -15,6 +15,7 @@ pub struct I18n {
     translations: HashMap<String, String>,
     pub available_languages: Vec<Language>,
     lang_files: HashMap<String, String>,
+    plugin_translations: HashMap<String, HashMap<String, String>>,
 }
 
 type EmbeddedLang = (&'static str, &'static str);
@@ -35,20 +36,8 @@ fn embedded_langs() -> Vec<EmbeddedLang> {
             include_str!("../../resources/in_app/lang/zh_cn.lang"),
         ),
         (
-            "zh_tw.lang",
-            include_str!("../../resources/in_app/lang/zh_tw.lang"),
-        ),
-        (
             "es_es.lang",
             include_str!("../../resources/in_app/lang/es_es.lang"),
-        ),
-        (
-            "ja_jp.lang",
-            include_str!("../../resources/in_app/lang/ja_jp.lang"),
-        ),
-        (
-            "ko_kr.lang",
-            include_str!("../../resources/in_app/lang/ko_kr.lang"),
         ),
     ]
 }
@@ -154,6 +143,7 @@ impl I18n {
             translations: HashMap::new(),
             available_languages: available,
             lang_files: file_map,
+            plugin_translations: HashMap::new(),
         };
         i18n.load(&default_lang);
         i18n
@@ -186,10 +176,25 @@ impl I18n {
     }
 
     pub fn get(&self, key: &str) -> String {
+        if let Some(overlay) = self.plugin_translations.get(&self.current_lang) {
+            if let Some(v) = overlay.get(key) {
+                return v.clone();
+            }
+        }
         self.translations
             .get(key)
             .cloned()
             .unwrap_or_else(|| key.to_string())
+    }
+
+    pub fn register_plugin_translations(&mut self, lang: &str, pairs: &[(&str, &str)]) {
+        let map = self
+            .plugin_translations
+            .entry(lang.to_string())
+            .or_default();
+        for (k, v) in pairs {
+            map.insert(k.to_string(), v.to_string());
+        }
     }
 }
 
@@ -222,6 +227,12 @@ pub fn tr_args(key: &str, args: &[&str]) -> String {
 
 pub fn available_langs() -> Vec<Language> {
     I18N.read().unwrap().available_languages.clone()
+}
+
+pub fn register_plugin_translations(lang: &str, pairs: &[(&str, &str)]) {
+    I18N.write()
+        .unwrap()
+        .register_plugin_translations(lang, pairs);
 }
 
 fn get_system_lang() -> String {
