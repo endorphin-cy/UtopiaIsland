@@ -52,3 +52,4 @@ pub unsafe extern "C" fn plugin_get_instance() -> PluginInstanceC {
 
 - [GitHub](https://github.com/Eatgrapes/WinIsland)
 - [Plugin Development Guide](https://github.com/Eatgrapes/WinIsland/blob/master/Page/plugin-dev.md)
+- [ChangeLog](https://github.com/Eatgrapes/WinIsland/blob/master/crates/winisland-plugin-api/ChangeLog.md)
