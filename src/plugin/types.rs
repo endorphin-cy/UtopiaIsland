@@ -3,11 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 pub use winisland_plugin_api::{
-    AnimationConfigC, ContextDataC, ContextIdC, HostApiC, HostStateC, ISLAND_CONTENT_TAG_MUSIC,
-    ISLAND_CONTENT_TAG_NOTIFICATION, ISLAND_CONTENT_TAG_STATUS, IslandContentC, MediaSourceC,
-    PRIORITY_HIGH, PRIORITY_LOW, PRIORITY_MEDIUM, PluginGetInstanceFn, PluginHandle,
-    PluginInstanceC, PluginMetadataC, PluginResultC, PluginType, PluginVTable, ShortcutC,
-    ThemeColorsC,
+    AnimationConfigC, ContextDataC, ContextIdC, HostApiC, HostStateC, MediaSourceC, PRIORITY_HIGH,
+    PRIORITY_LOW, PRIORITY_MEDIUM, PluginGetInstanceFn, PluginHandle, PluginInstanceC,
+    PluginMetadataC, PluginResultC, PluginType, PluginVTable, ShortcutC, ThemeColorsC,
+    TranslationPairC,
 };
 
 pub fn read_c_str(buf: &[u8]) -> String {
@@ -38,64 +37,6 @@ impl From<&PluginMetadataC> for PluginMetadata {
             version: read_c_str(&c.version),
             author: read_c_str(&c.author),
             description: read_c_str(&c.description),
-        }
-    }
-}
-
-/// 岛屿内容枚举（Host 端）
-#[derive(Debug, Clone)]
-pub enum IslandContent {
-    Music {
-        title: String,
-        artist: String,
-        cover_url: Option<String>,
-        is_playing: bool,
-    },
-    Notification {
-        title: String,
-        message: String,
-        icon_url: Option<String>,
-    },
-    Status {
-        label: String,
-        value: String,
-        icon: Option<String>,
-    },
-    Shortcut {
-        name: String,
-        icon: Option<String>,
-        action_id: String,
-    },
-    Custom(serde_json::Value),
-}
-
-impl From<&IslandContentC> for IslandContent {
-    fn from(c: &IslandContentC) -> Self {
-        match c.tag {
-            ISLAND_CONTENT_TAG_MUSIC => IslandContent::Music {
-                title: read_c_str(&c.title),
-                artist: read_c_str(&c.artist),
-                cover_url: read_opt_c_str(&c.cover_url),
-                is_playing: c.is_playing,
-            },
-            ISLAND_CONTENT_TAG_NOTIFICATION => IslandContent::Notification {
-                title: read_c_str(&c.title),
-                message: read_c_str(&c.message),
-                icon_url: read_opt_c_str(&c.cover_url),
-            },
-            ISLAND_CONTENT_TAG_STATUS => IslandContent::Status {
-                label: read_c_str(&c.label),
-                value: read_c_str(&c.value),
-                icon: read_opt_c_str(&c.cover_url),
-            },
-            _ => {
-                log::warn!("Unknown IslandContent tag: {}", c.tag);
-                IslandContent::Status {
-                    label: String::new(),
-                    value: String::new(),
-                    icon: None,
-                }
-            }
         }
     }
 }
@@ -192,7 +133,6 @@ pub trait Plugin: Send + Sync {
 }
 
 pub trait ContentProvider: Plugin {
-    fn get_content(&self) -> Option<IslandContent>;
     fn on_click(&mut self);
     fn on_expanded(&mut self, expanded: bool);
     fn supports_expand(&self) -> bool;
