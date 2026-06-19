@@ -15,6 +15,7 @@ export default defineConfig({
         nav: [
           { text: 'Home', link: '/' },
           { text: 'Guide', link: '/guide' },
+          { text: 'Changelog', link: '/changelog' },
           { text: 'Download', link: '/download' }
         ],
         sidebar: [
@@ -23,6 +24,12 @@ export default defineConfig({
             items: [
               { text: 'What is WinIsland?', link: '/guide' },
               { text: 'Getting Started', link: '/getting-started' }
+            ]
+          },
+          {
+            text: 'Changelog',
+            items: [
+              { text: 'Changelog', link: '/changelog' }
             ]
           },
           {
@@ -53,6 +60,7 @@ export default defineConfig({
         nav: [
           { text: '首页', link: '/zh/' },
           { text: '指南', link: '/zh/guide' },
+          { text: '更新日志', link: '/zh/changelog' },
           { text: '下载', link: '/zh/download' }
         ],
         sidebar: [
@@ -61,6 +69,12 @@ export default defineConfig({
             items: [
               { text: '什么是 WinIsland？', link: '/zh/guide' },
               { text: '快速开始', link: '/zh/getting-started' }
+            ]
+          },
+          {
+            text: '更新日志',
+            items: [
+              { text: '更新日志', link: '/zh/changelog' }
             ]
           },
           {

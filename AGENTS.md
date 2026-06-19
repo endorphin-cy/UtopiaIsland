@@ -32,3 +32,5 @@ cargo test           # Run tests
 7. **No unnecessary comments** — do NOT add comments in code unless asked.
 8. Prefer editing existing files over creating new ones.
 9. **WDA_EXCLUDEFROMCAPTURE is intentionally NOT set** — see glass.rs doc comments for rationale.
+10. **Do not modify changelog files** (`Changelog.md`, `Changelog-zh.md`) — only project maintainers can modify them, unless explicitly requested by the user.
+

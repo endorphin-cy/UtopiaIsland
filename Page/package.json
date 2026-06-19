@@ -4,9 +4,9 @@
   "description": "WinIsland Documentation",
   "main": "index.js",
   "scripts": {
-    "docs:dev": "vitepress dev .",
-    "docs:build": "vitepress build .",
-    "docs:preview": "vitepress preview ."
+    "docs:dev": "node copy-changelog.js && vitepress dev .",
+    "docs:build": "node copy-changelog.js && vitepress build .",
+    "docs:preview": "node copy-changelog.js && vitepress preview ."
   },
   "devDependencies": {
     "vitepress": "^1.0.0"
