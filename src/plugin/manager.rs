@@ -53,6 +53,7 @@ pub fn init_host_api() -> *const crate::plugin::types::HostApiC {
             query_host_state: host_query_host_state,
             set_media_source: host_set_media_source,
             clear_media_source: host_clear_media_source,
+            register_translations: host_register_translations,
         })
     });
     api.as_ref() as *const _
@@ -225,6 +226,28 @@ unsafe extern "C" fn host_query_host_state(
             is_playing: false,
             theme: [0u8; 32],
         })
+}
+
+unsafe extern "C" fn host_register_translations(
+    _handle: crate::plugin::types::PluginHandle,
+    lang: *const std::ffi::c_char,
+    pairs: *const crate::plugin::types::TranslationPairC,
+    count: u32,
+) -> crate::plugin::types::PluginResultC {
+    let lang = unsafe { std::ffi::CStr::from_ptr(lang) }
+        .to_str()
+        .unwrap_or("en_us");
+    let slice = unsafe { std::slice::from_raw_parts(pairs, count as usize) };
+    let rust_pairs: Vec<(&str, &str)> = slice
+        .iter()
+        .filter_map(|p| {
+            let k = unsafe { std::ffi::CStr::from_ptr(p.key) }.to_str().ok()?;
+            let v = unsafe { std::ffi::CStr::from_ptr(p.value) }.to_str().ok()?;
+            Some((k, v))
+        })
+        .collect();
+    crate::core::i18n::register_plugin_translations(lang, &rust_pairs);
+    crate::plugin::types::PluginResultC::ok()
 }
 
 // ---------------------------------------------------------------------------
