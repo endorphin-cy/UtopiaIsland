@@ -841,8 +841,19 @@ impl SettingsApp {
 
             let canvas = sk_surface.canvas();
             canvas.reset_matrix();
-            canvas.clear(theme.win_bg);
+            canvas.clear(Color::TRANSPARENT);
             canvas.scale((scale, scale));
+
+            let win_rect = Rect::from_xywh(0.0, 0.0, win_w, win_h);
+            let win_rrect = skia_safe::RRect::new_rect_xy(win_rect, 12.0, 12.0);
+
+            canvas.save();
+            canvas.clip_rrect(win_rrect, skia_safe::ClipOp::Intersect, true);
+
+            let mut bg_paint = Paint::default();
+            bg_paint.set_anti_alias(true);
+            bg_paint.set_color(theme.win_bg);
+            canvas.draw_rect(win_rect, &bg_paint);
 
             self.draw_sidebar(canvas, &theme);
 
@@ -900,6 +911,18 @@ impl SettingsApp {
             }
 
             self.draw_popup(canvas, &theme);
+            canvas.restore();
+
+            // Draw a subtle rounded border around the window
+            let border_rect = Rect::from_xywh(0.5, 0.5, win_w - 1.0, win_h - 1.0);
+            let border_rrect = skia_safe::RRect::new_rect_xy(border_rect, 11.5, 11.5);
+            let mut border_paint = Paint::default();
+            border_paint.set_anti_alias(true);
+            border_paint.set_style(skia_safe::paint::Style::Stroke);
+            border_paint.set_stroke_width(1.0);
+            border_paint.set_color(theme.separator);
+            canvas.draw_rrect(border_rrect, &border_paint);
+
             let _ = buffer.present();
         }
 
@@ -1330,6 +1353,7 @@ impl ApplicationHandler for SettingsApp {
             .with_position(LogicalPosition::new(win_x, win_y))
             .with_resizable(true)
             .with_decorations(false)
+            .with_transparent(true)
             .with_window_icon(get_app_icon());
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         self.window = Some(window.clone());
