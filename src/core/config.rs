@@ -141,10 +141,6 @@ pub struct AppConfig {
     pub expanded_cover_shape: String,
     #[serde(default = "default_cover_rotate")]
     pub cover_rotate: bool,
-    #[serde(default = "default_audio_gate")]
-    pub audio_gate: bool,
-    #[serde(default = "default_auto_gate")]
-    pub auto_gate: bool,
 }
 
 fn default_island_style() -> String {
@@ -247,14 +243,6 @@ fn default_cover_rotate() -> bool {
     false
 }
 
-fn default_audio_gate() -> bool {
-    true
-}
-
-fn default_auto_gate() -> bool {
-    true
-}
-
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -292,8 +280,6 @@ impl Default for AppConfig {
             mini_cover_shape: "square".to_string(),
             expanded_cover_shape: "square".to_string(),
             cover_rotate: false,
-            audio_gate: true,
-            auto_gate: true,
         }
     }
 }
