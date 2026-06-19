@@ -35,8 +35,20 @@ fn embedded_langs() -> Vec<EmbeddedLang> {
             include_str!("../../resources/in_app/lang/zh_cn.lang"),
         ),
         (
+            "zh_tw.lang",
+            include_str!("../../resources/in_app/lang/zh_tw.lang"),
+        ),
+        (
             "es_es.lang",
             include_str!("../../resources/in_app/lang/es_es.lang"),
+        ),
+        (
+            "ja_jp.lang",
+            include_str!("../../resources/in_app/lang/ja_jp.lang"),
+        ),
+        (
+            "ko_kr.lang",
+            include_str!("../../resources/in_app/lang/ko_kr.lang"),
         ),
     ]
 }

@@ -406,12 +406,12 @@ impl SettingsApp {
                     } else {
                         let lang = current_lang();
                         let all_langs = available_langs();
-                        let options: Vec<String> = all_langs.iter().map(|l| l.name.clone()).collect();
-                        let values: Vec<String> = all_langs.iter().map(|l| l.code.clone()).collect();
-                        let selected_idx = all_langs
-                            .iter()
-                            .position(|l| l.code == lang)
-                            .unwrap_or(0);
+                        let options: Vec<String> =
+                            all_langs.iter().map(|l| l.name.clone()).collect();
+                        let values: Vec<String> =
+                            all_langs.iter().map(|l| l.code.clone()).collect();
+                        let selected_idx =
+                            all_langs.iter().position(|l| l.code == lang).unwrap_or(0);
                         self.popup = Some(PopupState::new(
                             PopupKind::Language,
                             Rect::from_xywh(btn_x, btn_y, POPUP_BTN_W, POPUP_BTN_H),
