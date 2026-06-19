@@ -14,6 +14,8 @@ For non-project-members, your PR can cover the following areas:
 
 1.3. Feature PRs with a large diff (new features, refactoring core modules, etc.) require a detailed design proposal in the PR first; project members will then review it.
 
+1.4. **Changelog**: Do not modify changelog files (`Changelog.md`, `Changelog-zh.md`) in your pull request. Only project maintainers are allowed to update these files.
+
 ⛔ For PRs that fall outside this scope, project members **have the right to reject them directly**.
 
 > Our principle: **Any contribution should deliver more value to the project than the effort required to review it**. Please communicate with project members before starting work to avoid conflicting directions.
