@@ -13,7 +13,7 @@ use crate::utils::settings_ui::*;
 use skia_safe::Rect;
 
 impl SettingsApp {
-    pub(super) fn handle_click(&mut self) {
+    pub(super) fn handle_click(&mut self, _el: &winit::event_loop::ActiveEventLoop) {
         let (mx, my) = self.logical_mouse_pos;
 
         if let Some(popup) = &self.popup {
@@ -42,12 +42,6 @@ impl SettingsApp {
                         self.config.settings_theme = value.clone();
                         self.update_theme();
                     }
-                    PopupKind::MiniCoverShape => {
-                        self.config.mini_cover_shape = value;
-                    }
-                    PopupKind::ExpandedCoverShape => {
-                        self.config.expanded_cover_shape = value;
-                    }
                 }
                 save_config(&self.config);
                 self.mark_items_dirty();
@@ -62,7 +56,7 @@ impl SettingsApp {
 
         if mx < SIDEBAR_W {
             let pages = 3;
-            let start_y = 20.0;
+            let start_y = 60.0;
             for i in 0..pages {
                 let row_y = start_y + i as f32 * (SIDEBAR_ROW_H + 2.0);
                 if my >= row_y
@@ -119,7 +113,7 @@ impl SettingsApp {
         let content_start_y = if self.active_page == 0 {
             SUB_TAB_START_Y + SUB_TAB_H + CONTENT_START_Y
         } else {
-            CONTENT_START_Y
+            50.0
         };
         let content_y = my + self.scroll_y;
         let items = self.build_current_items();
@@ -263,13 +257,7 @@ impl SettingsApp {
                         l if l == tr("cover_rotate") => {
                             self.config.cover_rotate = !self.config.cover_rotate
                         }
-                        l if l == tr("audio_gate") => {
-                            self.config.audio_gate = !self.config.audio_gate;
-                        }
-                        l if l == tr("auto_gate") => self.config.auto_gate = !self.config.auto_gate,
-                        l if l == tr("mini_controls") => {
-                            self.config.mini_controls = !self.config.mini_controls
-                        }
+
                         l if l == tr("start_boot") => {
                             self.config.auto_start = !self.config.auto_start;
                             let _ = set_autostart(self.config.auto_start);
@@ -330,27 +318,17 @@ impl SettingsApp {
                     } else if label == &tr("island_style") {
                         let selected_idx = match self.config.island_style.as_str() {
                             "glass" => 1,
-                            "mica" => 2,
-                            "dynamic" => 3,
-                            "liquid_glass" => 4,
+                            "dynamic" => 2,
                             _ => 0,
                         };
                         self.popup = Some(PopupState::new(
                             PopupKind::IslandStyle,
                             Rect::from_xywh(btn_x, btn_y, POPUP_BTN_W, POPUP_BTN_H),
-                            vec![
-                                tr("style_default"),
-                                tr("style_glass"),
-                                tr("style_mica"),
-                                tr("style_dynamic"),
-                                tr("style_liquid_glass"),
-                            ],
+                            vec![tr("style_default"), tr("style_glass"), tr("style_dynamic")],
                             vec![
                                 "default".to_string(),
                                 "glass".to_string(),
-                                "mica".to_string(),
                                 "dynamic".to_string(),
-                                "liquid_glass".to_string(),
                             ],
                             selected_idx,
                             self.win_w / scale,
@@ -408,36 +386,6 @@ impl SettingsApp {
                             self.win_w / scale,
                             self.win_h / scale,
                         ));
-                    } else if label == &tr("mini_cover_shape") {
-                        let selected_idx = if self.config.mini_cover_shape == "circle" {
-                            1
-                        } else {
-                            0
-                        };
-                        self.popup = Some(PopupState::new(
-                            PopupKind::MiniCoverShape,
-                            Rect::from_xywh(btn_x, btn_y, POPUP_BTN_W, POPUP_BTN_H),
-                            vec![tr("shape_square"), tr("shape_circle")],
-                            vec!["square".to_string(), "circle".to_string()],
-                            selected_idx,
-                            self.win_w / scale,
-                            self.win_h / scale,
-                        ));
-                    } else if label == &tr("expanded_cover_shape") {
-                        let selected_idx = if self.config.expanded_cover_shape == "circle" {
-                            1
-                        } else {
-                            0
-                        };
-                        self.popup = Some(PopupState::new(
-                            PopupKind::ExpandedCoverShape,
-                            Rect::from_xywh(btn_x, btn_y, POPUP_BTN_W, POPUP_BTN_H),
-                            vec![tr("shape_square"), tr("shape_circle")],
-                            vec!["square".to_string(), "circle".to_string()],
-                            selected_idx,
-                            self.win_w / scale,
-                            self.win_h / scale,
-                        ));
                     } else {
                         let lang = current_lang();
                         self.popup = Some(PopupState::new(
@@ -464,9 +412,6 @@ impl SettingsApp {
                     self.config.adaptive_border,
                     self.config.motion_blur,
                     self.config.cover_rotate,
-                    self.config.audio_gate,
-                    self.config.auto_gate,
-                    self.config.mini_controls,
                     self.config.auto_start,
                     self.config.auto_hide,
                     self.config.check_for_updates,
@@ -661,6 +606,14 @@ impl SettingsApp {
     pub(super) fn get_hover_state(&mut self) -> bool {
         let (mx, my) = self.logical_mouse_pos;
 
+        // Hover over Apple dots
+        let is_on_red = (mx - 20.0).powi(2) + (my - 24.0).powi(2) <= 36.0;
+        let is_on_yellow = (mx - 40.0).powi(2) + (my - 24.0).powi(2) <= 36.0;
+        let is_on_green = (mx - 60.0).powi(2) + (my - 24.0).powi(2) <= 36.0;
+        if is_on_red || is_on_yellow || is_on_green {
+            return true;
+        }
+
         if let Some(popup) = &self.popup {
             let menu = popup.menu_rect();
             if mx >= menu.left && mx <= menu.right && my >= menu.top && my <= menu.bottom {
@@ -669,7 +622,7 @@ impl SettingsApp {
         }
 
         if mx < SIDEBAR_W {
-            let start_y = 20.0;
+            let start_y = 60.0;
             for i in 0..3 {
                 let row_y = start_y + i as f32 * (SIDEBAR_ROW_H + 2.0);
                 if my >= row_y
@@ -697,7 +650,7 @@ impl SettingsApp {
         let content_start_y = if self.active_page == 0 {
             SUB_TAB_START_Y + SUB_TAB_H + CONTENT_START_Y
         } else {
-            CONTENT_START_Y
+            50.0
         };
         let content_y = my + self.scroll_y;
         self.ensure_items_cache();

@@ -2,7 +2,7 @@ use crate::core::audio::AudioProcessor;
 use crate::core::config::{AppConfig, PADDING, TOP_OFFSET, WINDOW_TITLE};
 use crate::core::context::ContextManager;
 use crate::core::persistence::load_config;
-use crate::core::render::{draw_island, get_mini_control_rects};
+use crate::core::render::draw_island;
 use crate::core::smtc::SmtcListener;
 use crate::plugin::PluginManager;
 use crate::plugin::zip_loader;
@@ -12,11 +12,9 @@ use crate::ui::expanded::music_view::{
     set_progress_dragging, set_progress_hover, trigger_cover_flip, trigger_next_click,
     trigger_pause_click, trigger_prev_click,
 };
-use crate::utils::backdrop::{clear_mica_cache, disable_mica};
 use crate::utils::blur::calculate_blur_sigmas;
 use crate::utils::color::get_island_border_weights;
 use crate::utils::icon::get_app_icon;
-use crate::utils::liquid_glass::{clear_liquid_glass_cache, set_exclude_from_capture};
 use crate::utils::mouse::{
     get_global_cursor_pos, is_cursor_hidden, is_foreground_fullscreen, is_left_button_pressed,
     is_point_in_rect,
@@ -555,65 +553,11 @@ impl App {
                 self.expanded = false;
                 self.widget_view = false;
             }
-        } else {
-            let media = self.smtc.get_info();
-            let music_on = self.config.smtc_enabled && !media.title.is_empty();
-
-            if music_on && !media.is_playing && self.config.mini_controls {
-                let w = self.spring_w.value;
-                let h = self.spring_h.value;
-                let (prev_rect, play_rect, next_rect) = get_mini_control_rects(
-                    offset_x as f32,
-                    current_island_y as f32,
-                    w,
-                    h,
-                    self.config.global_scale,
-                );
-
-                let cx = rel_x as f32;
-                let cy = rel_y as f32;
-
-                let mut hit_control = false;
-                if let Some((px, py, pw, ph)) = prev_rect
-                    && cx >= px
-                    && cx <= px + pw
-                    && cy >= py
-                    && cy <= py + ph
-                {
-                    self.smtc.request_prev();
-                    hit_control = true;
-                }
-                if !hit_control
-                    && let Some((px, py, pw, ph)) = play_rect
-                    && cx >= px
-                    && cx <= px + pw
-                    && cy >= py
-                    && cy <= py + ph
-                {
-                    self.smtc.request_toggle_play();
-                    hit_control = true;
-                }
-                if !hit_control
-                    && let Some((px, py, pw, ph)) = next_rect
-                    && cx >= px
-                    && cx <= px + pw
-                    && cy >= py
-                    && cy <= py + ph
-                {
-                    self.smtc.request_next();
-                    hit_control = true;
-                }
-                if hit_control {
-                    return;
-                }
-            }
-
-            if is_hovering_visible || is_on_hidden_handle {
-                self.is_dragging = true;
-                self.drag_start_py = rel_y + self.win_y;
-                self.drag_start_hide_val = self.spring_hide.value;
-                self.drag_has_moved = false;
-            }
+        } else if is_hovering_visible || is_on_hidden_handle {
+            self.is_dragging = true;
+            self.drag_start_py = rel_y + self.win_y;
+            self.drag_start_hide_val = self.spring_hide.value;
+            self.drag_has_moved = false;
         }
     }
 
@@ -710,23 +654,6 @@ impl App {
 
             if old_style != self.config.island_style {
                 crate::utils::backdrop::clear_dynamic_bg_cache();
-                clear_mica_cache();
-                clear_liquid_glass_cache();
-                if let Ok(handle) = window.window_handle() {
-                    let raw = handle.as_raw();
-                    if let RawWindowHandle::Win32(win32_handle) = raw {
-                        let hwnd = HWND(win32_handle.hwnd.get() as _);
-                        if old_style == "mica" {
-                            disable_mica(hwnd);
-                        }
-                        if old_style == "liquid_glass" {
-                            set_exclude_from_capture(hwnd, false);
-                        }
-                        if self.config.island_style == "liquid_glass" {
-                            set_exclude_from_capture(hwnd, true);
-                        }
-                    }
-                }
             }
 
             if old_mini_shape != self.config.mini_cover_shape
@@ -908,9 +835,6 @@ impl ApplicationHandler for App {
                     0,
                     WS_MAXIMIZEBOX.0 as isize | WS_THICKFRAME.0 as isize,
                 );
-                if self.config.island_style == "liquid_glass" {
-                    set_exclude_from_capture(hwnd, true);
-                }
             }
 
             self.window = Some(window.clone());
@@ -951,9 +875,6 @@ impl ApplicationHandler for App {
                     self.win_x,
                     self.win_y
                 );
-                if self.config.island_style == "mica" {
-                    clear_mica_cache();
-                }
             }
             // Retry GPU context creation up to 3 times with 500ms delay.
             // Handles transient GPU unavailability (e.g., after taskkill from mpv script).
@@ -1053,7 +974,6 @@ impl ApplicationHandler for App {
                     if let Some(tray) = self.tray.as_mut() {
                         tray.update_theme(is_light);
                     }
-                    clear_liquid_glass_cache();
                 }
                 WindowEvent::Resized(_) if win.is_maximized() => {
                     win.set_maximized(false);
@@ -1128,18 +1048,9 @@ impl ApplicationHandler for App {
                             media_info.position_ms = self.seeking_preview_ms;
                             media_info.last_update = Instant::now();
                         }
-                        if !self.config.audio_gate {
-                            self.audio.set_gate_override(false);
-                        } else if self.config.auto_gate {
-                            let is_hidden = self.auto_hidden || self.manually_hidden;
-                            self.audio.set_gate_override(!is_hidden);
-                        } else {
-                            self.audio.set_gate_override(true);
-                        }
+                        let is_hidden = self.auto_hidden || self.manually_hidden;
+                        self.audio.set_gate_override(!is_hidden);
                         media_info.spectrum = self.audio.get_spectrum();
-                        if !self.config.audio_gate {
-                            media_info.spectrum = [0.0; 6];
-                        }
                         let mut music_active = false;
                         if self.config.smtc_enabled && !media_info.title.is_empty() {
                             music_active = true;
@@ -1191,7 +1102,6 @@ impl ApplicationHandler for App {
                                     mini_cover_shape: &self.config.mini_cover_shape,
                                     expanded_cover_shape: &self.config.expanded_cover_shape,
                                     cover_rotate: self.config.cover_rotate,
-                                    mini_controls: self.config.mini_controls,
                                     lyrics_delay: self.config.lyrics_delay,
                                     dt,
                                 },

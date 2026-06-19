@@ -1,15 +1,13 @@
 use crate::core::config::{DockPosition, PADDING, TOP_OFFSET};
 use crate::core::smtc::MediaInfo;
-use crate::icons::controls::draw_play_button;
 use crate::ui::expanded::music_view::{
     DrawMusicPageParams, DrawVisualizerParams, draw_music_page, draw_text_cached, draw_visualizer,
     get_cached_media_image, get_cached_media_image_with_key, get_media_palette,
 };
 use crate::ui::expanded::widget_view::draw_widget_page;
-use crate::utils::backdrop::{get_dynamic_bg_color, get_last_valid_color, get_mica_background};
+use crate::utils::backdrop::{get_dynamic_bg_color, get_last_valid_color};
 use crate::utils::font::{DrawTextCachedParams, FontManager};
 use crate::utils::glass::get_glass_background;
-use crate::utils::liquid_glass::get_liquid_glass_background;
 use skia_safe::canvas::SrcRectConstraint;
 use skia_safe::{
     ClipOp, Color, FilterMode, ISize, MipmapMode, Paint, RRect, Rect, SamplingOptions,
@@ -52,6 +50,7 @@ pub struct LyricsParams<'a> {
     pub lyric_scroll_offset: f32,
 }
 
+#[allow(dead_code)]
 pub struct WindowParams {
     pub win_x: i32,
     pub win_y: i32,
@@ -61,6 +60,7 @@ pub struct WindowParams {
     pub monitor_h: u32,
 }
 
+#[allow(dead_code)]
 pub struct StyleParams<'a> {
     pub island_style: &'a str,
     pub use_blur: bool,
@@ -69,7 +69,7 @@ pub struct StyleParams<'a> {
     pub mini_cover_shape: &'a str,
     pub expanded_cover_shape: &'a str,
     pub cover_rotate: bool,
-    pub mini_controls: bool,
+
     pub lyrics_delay: f64,
     pub dt: f32,
 }
@@ -121,23 +121,16 @@ pub fn draw_island(
         lyric_transition,
         lyric_scroll_offset,
     } = lyrics;
-    let WindowParams {
-        win_x,
-        win_y,
-        monitor_x,
-        monitor_y,
-        monitor_w,
-        monitor_h,
-    } = window;
+    let WindowParams { win_x, win_y, .. } = window;
     let StyleParams {
         island_style,
         use_blur,
         font_size,
         weights: _weights,
-        mini_cover_shape,
-        expanded_cover_shape,
-        cover_rotate,
-        mini_controls: _,
+        mini_cover_shape: _,
+        expanded_cover_shape: _,
+        cover_rotate: _,
+
         lyrics_delay,
         dt,
     } = style;
@@ -195,82 +188,10 @@ pub fn draw_island(
 
     let mut bg_color = Color::BLACK;
 
-    // Liquid glass text uses a tint derived from the music palette — keeps it
-    // readable on the dark refractive background while feeling cohesive.
-    let liquid_palette = if island_style == "liquid_glass" {
-        let p = get_media_palette(media);
-        if p.is_empty() || (p[0].r() >= 250 && p[0].g() >= 250 && p[0].b() >= 250) {
-            vec![Color::from_rgb(200, 200, 200)]
-        } else {
-            p
-        }
-    } else {
-        vec![Color::from_rgb(200, 200, 200)]
-    };
+    let text_color = Color::WHITE;
+    let text_color_sec = Color::WHITE;
 
-    let text_color = if island_style == "liquid_glass" {
-        let c = &liquid_palette[0];
-        Color::from_rgb(
-            (c.r() as f32 * 0.25 + 255.0 * 0.75) as u8,
-            (c.g() as f32 * 0.25 + 255.0 * 0.75) as u8,
-            (c.b() as f32 * 0.25 + 255.0 * 0.75) as u8,
-        )
-    } else {
-        Color::WHITE
-    };
-    let text_color_sec = if island_style == "liquid_glass" {
-        let c = &liquid_palette[0];
-        Color::from_rgb(
-            (c.r() as f32 * 0.15 + 255.0 * 0.85) as u8,
-            (c.g() as f32 * 0.15 + 255.0 * 0.85) as u8,
-            (c.b() as f32 * 0.15 + 255.0 * 0.85) as u8,
-        )
-    } else {
-        Color::WHITE
-    };
-
-    if island_style == "liquid_glass" {
-        let screen_x = win_x + offset_x as i32;
-        let screen_y = win_y + offset_y as i32;
-
-        let mut shadow_paint = Paint::default();
-        shadow_paint.set_anti_alias(true);
-        shadow_paint.set_color(Color::from_argb(50, 0, 0, 0));
-        if let Some(filter) = image_filters::blur((5.0, 5.0), None, None, None) {
-            shadow_paint.set_image_filter(filter);
-        }
-        let shadow_rrect = RRect::new_rect_xy(
-            Rect::from_xywh(offset_x, offset_y + 2.0, current_w, current_h),
-            current_r,
-            current_r,
-        );
-        canvas.draw_rrect(shadow_rrect, &shadow_paint);
-
-        canvas.save();
-        canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-
-        if let Some(bg_img) = get_liquid_glass_background(
-            screen_x,
-            screen_y,
-            current_w as u32,
-            current_h as u32,
-            current_r,
-            monitor_x,
-            monitor_y,
-            monitor_w,
-            monitor_h,
-        ) {
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
-            canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
-        } else {
-            let mut bg_paint = Paint::default();
-            bg_paint.set_color(Color::from_argb(180, 32, 32, 36));
-            bg_paint.set_anti_alias(true);
-            canvas.draw_rrect(rrect, &bg_paint);
-        }
-    } else if island_style == "glass" {
+    if island_style == "glass" {
         let screen_x = win_x + offset_x as i32;
         let screen_y = win_y + offset_y as i32;
         canvas.save();
@@ -286,36 +207,12 @@ pub fn draw_island(
             paint.set_anti_alias(true);
             let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
             canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
-        } else {
-            let mut bg_paint = Paint::default();
-            bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
-            bg_paint.set_anti_alias(true);
-            canvas.draw_rrect(rrect, &bg_paint);
-        }
-    } else if island_style == "mica" {
-        let screen_x = win_x + offset_x as i32;
-        let screen_y = win_y + offset_y as i32;
-        canvas.save();
-        canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-        if let Some(bg_img) = get_mica_background(
-            screen_x,
-            screen_y,
-            current_w as u32,
-            current_h as u32,
-            monitor_x,
-            monitor_y,
-            monitor_w,
-            monitor_h,
-        ) {
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
-            canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
 
-            let mut overlay = Paint::default();
-            overlay.set_color(Color::from_argb(110, 32, 32, 32));
-            overlay.set_anti_alias(true);
-            canvas.draw_rrect(rrect, &overlay);
+            let mut darken = Paint::default();
+            darken.set_color(Color::from_argb(130, 10, 10, 14));
+            darken.set_anti_alias(true);
+            darken.set_blend_mode(skia_safe::BlendMode::Multiply);
+            canvas.draw_rect(rect, &darken);
         } else {
             let mut bg_paint = Paint::default();
             bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
@@ -325,15 +222,41 @@ pub fn draw_island(
     } else if island_style == "dynamic" {
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-        if let Some((img, cache_key)) = get_cached_media_image_with_key(media) {
-            bg_color = get_dynamic_bg_color(&img, &cache_key);
-        } else if let Some(last_color) = get_last_valid_color() {
-            bg_color = last_color;
+        let screen_x = win_x + offset_x as i32;
+        let screen_y = win_y + offset_y as i32;
+        if let Some(bg_img) = get_glass_background(
+            screen_x,
+            screen_y,
+            current_w as u32,
+            current_h as u32,
+            40.0 * global_scale,
+        ) {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+            canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
+
+            if let Some((img, cache_key)) = get_cached_media_image_with_key(media) {
+                bg_color = get_dynamic_bg_color(&img, &cache_key);
+            } else if let Some(last_color) = get_last_valid_color() {
+                bg_color = last_color;
+            }
+
+            let mut tint = Paint::default();
+            tint.set_color(bg_color);
+            tint.set_anti_alias(true);
+            canvas.draw_rect(rect, &tint);
+        } else {
+            if let Some((img, cache_key)) = get_cached_media_image_with_key(media) {
+                bg_color = get_dynamic_bg_color(&img, &cache_key);
+            } else if let Some(last_color) = get_last_valid_color() {
+                bg_color = last_color;
+            }
+            let mut bg_paint = Paint::default();
+            bg_paint.set_color(bg_color);
+            bg_paint.set_anti_alias(true);
+            canvas.draw_rrect(rrect, &bg_paint);
         }
-        let mut bg_paint = Paint::default();
-        bg_paint.set_color(bg_color);
-        bg_paint.set_anti_alias(true);
-        canvas.draw_rrect(rrect, &bg_paint);
     } else {
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);
@@ -346,9 +269,7 @@ pub fn draw_island(
     let expanded_alpha_f = (expansion_progress.powf(2.0)).clamp(0.0, 1.0) * (1.0 - hide_progress);
     let mini_alpha_f = (1.0 - expansion_progress * 1.5).clamp(0.0, 1.0) * (1.0 - hide_progress);
 
-    let palette = if island_style == "liquid_glass" {
-        liquid_palette.clone()
-    } else if expanded_alpha_f > 0.01 || mini_alpha_f > 0.01 {
+    let palette = if expanded_alpha_f > 0.01 || mini_alpha_f > 0.01 {
         get_media_palette(media)
     } else {
         vec![
@@ -388,8 +309,8 @@ pub fn draw_island(
             viz_h_scale: viz_h_scale * global_scale,
             use_blur,
             font_size,
-            cover_shape: expanded_cover_shape,
-            cover_rotate,
+            cover_shape: "square",
+            cover_rotate: false,
             dt,
             text_color,
             text_color_sec,
@@ -428,65 +349,25 @@ pub fn draw_island(
                 let alpha = (mini_alpha_f * 255.0) as u8;
                 if let Some(image) = get_cached_media_image(media) {
                     let base_size = 18.0 * global_scale;
-                    let (size, ix, iy) = if mini_cover_shape == "circle" {
-                        let s = base_size * 1.15;
-                        let x = offset_x + 10.0 * global_scale - (s - base_size) / 2.0;
-                        let y = offset_y + (current_h - s) / 2.0;
-                        (s, x, y)
-                    } else {
-                        (
-                            base_size,
-                            offset_x + 10.0 * global_scale,
-                            offset_y + (current_h - base_size) / 2.0,
-                        )
-                    };
+                    let (size, ix, iy) = (
+                        base_size,
+                        offset_x + 10.0 * global_scale,
+                        offset_y + (current_h - base_size) / 2.0,
+                    );
                     let mut paint = Paint::default();
                     paint.set_anti_alias(true);
                     paint.set_alpha_f(alpha as f32 / 255.0);
                     canvas.save();
 
-                    let is_mini_rotating =
-                        cover_rotate && mini_cover_shape == "circle" && media.is_playing;
-                    let mini_rotation_angle = MINI_COVER_ROTATION.with(|cell| {
-                        let mut angle = cell.borrow_mut();
-                        if is_mini_rotating {
-                            *angle += 0.5 * dt;
-                            if *angle >= 360.0 {
-                                *angle -= 360.0;
-                            }
-                        }
-                        *angle
-                    });
-
-                    if cover_rotate && mini_cover_shape == "circle" {
-                        let img_cx = ix + size / 2.0;
-                        let img_cy = iy + size / 2.0;
-                        canvas.translate((img_cx, img_cy));
-                        canvas.rotate(mini_rotation_angle, None);
-                        canvas.translate((-img_cx, -img_cy));
-                    }
-
-                    if mini_cover_shape == "circle" {
-                        canvas.clip_rrect(
-                            RRect::new_rect_xy(
-                                Rect::from_xywh(ix, iy, size, size),
-                                size / 2.0,
-                                size / 2.0,
-                            ),
-                            ClipOp::Intersect,
-                            true,
-                        );
-                    } else {
-                        canvas.clip_rrect(
-                            RRect::new_rect_xy(
-                                Rect::from_xywh(ix, iy, size, size),
-                                5.0 * global_scale,
-                                5.0 * global_scale,
-                            ),
-                            ClipOp::Intersect,
-                            true,
-                        );
-                    }
+                    canvas.clip_rrect(
+                        RRect::new_rect_xy(
+                            Rect::from_xywh(ix, iy, size, size),
+                            5.0 * global_scale,
+                            5.0 * global_scale,
+                        ),
+                        ClipOp::Intersect,
+                        true,
+                    );
                     let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear);
                     let img_w = image.width() as f32;
                     let img_h = image.height() as f32;
@@ -513,10 +394,6 @@ pub fn draw_island(
                         &paint,
                     );
                     canvas.restore();
-
-                    if is_mini_rotating {
-                        widget_animating = true;
-                    }
                 }
                 let palette = &palette;
                 let viz_x = offset_x + current_w - 17.0 * global_scale;
@@ -534,26 +411,7 @@ pub fn draw_island(
                     smooth_factors: (0.6, 0.08),
                 });
 
-                let is_paused = music_active && !media.is_playing && style.mini_controls;
-
-                if is_paused {
-                    let lyric_fade_f = (1.0 - expansion_progress * 2.5).clamp(0.0, 1.0);
-                    let ctrl_alpha = (alpha as f32 * lyric_fade_f) as u8;
-
-                    if ctrl_alpha > 0 {
-                        let space_left = offset_x + 30.0 * global_scale;
-                        let space_right = offset_x + current_w - 29.0 * global_scale;
-                        let center_x = (space_left + space_right) / 2.0;
-                        let center_y = offset_y + current_h / 2.0;
-
-                        let btn_scale = 0.28 * global_scale;
-
-                        canvas.save();
-                        canvas.translate((center_x, center_y));
-                        draw_play_button(canvas, 0.0, 0.0, ctrl_alpha, btn_scale, text_color);
-                        canvas.restore();
-                    }
-                } else if !current_lyric.is_empty() || !old_lyric.is_empty() {
+                if !current_lyric.is_empty() || !old_lyric.is_empty() {
                     let lyric_fade_f = (1.0 - expansion_progress * 2.5).clamp(0.0, 1.0);
                     let alpha = (alpha as f32 * lyric_fade_f) as u8;
 
@@ -795,7 +653,7 @@ pub fn draw_island(
     }
     canvas.restore();
 
-    if island_style != "liquid_glass" {
+    {
         let mut border_paint = Paint::default();
         border_paint.set_anti_alias(true);
         border_paint.set_style(skia_safe::PaintStyle::Stroke);
@@ -832,34 +690,4 @@ pub fn draw_island(
     }
 
     widget_animating
-}
-
-#[allow(clippy::type_complexity)]
-pub fn get_mini_control_rects(
-    offset_x: f32,
-    offset_y: f32,
-    current_w: f32,
-    current_h: f32,
-    global_scale: f32,
-) -> (
-    Option<(f32, f32, f32, f32)>,
-    Option<(f32, f32, f32, f32)>,
-    Option<(f32, f32, f32, f32)>,
-) {
-    let space_left = offset_x + 30.0 * global_scale;
-    let space_right = offset_x + current_w - 29.0 * global_scale;
-    let center_x = (space_left + space_right) / 2.0;
-    let center_y = offset_y + current_h / 2.0;
-
-    let hit_size = 20.0 * global_scale;
-
-    let play_rect = (
-        center_x - hit_size / 2.0,
-        center_y - hit_size / 2.0,
-        hit_size,
-        hit_size,
-    );
-
-    // Only the play/pause button is rendered; prev/next are invisible.
-    (None, Some(play_rect), None)
 }

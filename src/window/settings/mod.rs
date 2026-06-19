@@ -20,7 +20,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use winit::window::{Window, WindowButtons, WindowId};
+use winit::window::{Window, WindowId};
 
 pub mod input;
 
@@ -45,8 +45,6 @@ enum PopupKind {
     IslandStyle,
     DockPositionPopup,
     SettingsTheme,
-    MiniCoverShape,
-    ExpandedCoverShape,
 }
 
 struct PopupState {
@@ -181,6 +179,8 @@ pub struct SettingsApp {
     cached_row_heights: Vec<f32>,
     win_w: f32,
     win_h: f32,
+    focused: bool,
+    dots_hovered: bool,
 }
 
 impl SettingsApp {
@@ -189,9 +189,6 @@ impl SettingsApp {
             config.adaptive_border,
             config.motion_blur,
             config.cover_rotate,
-            config.audio_gate,
-            config.auto_gate,
-            config.mini_controls,
             config.auto_start,
             config.auto_hide,
             config.check_for_updates,
@@ -230,6 +227,8 @@ impl SettingsApp {
             cached_row_heights: Vec::new(),
             win_w: WIN_W,
             win_h: WIN_H,
+            focused: true,
+            dots_hovered: false,
         }
     }
 
@@ -383,28 +382,6 @@ impl SettingsApp {
                     ],
                     enabled: true,
                 });
-                items.push(SettingsItem::RowSourceSelect {
-                    label: tr("mini_cover_shape"),
-                    options: vec![
-                        (tr("shape_square"), self.config.mini_cover_shape == "square"),
-                        (tr("shape_circle"), self.config.mini_cover_shape == "circle"),
-                    ],
-                    enabled: true,
-                });
-                items.push(SettingsItem::RowSourceSelect {
-                    label: tr("expanded_cover_shape"),
-                    options: vec![
-                        (
-                            tr("shape_square"),
-                            self.config.expanded_cover_shape == "square",
-                        ),
-                        (
-                            tr("shape_circle"),
-                            self.config.expanded_cover_shape == "circle",
-                        ),
-                    ],
-                    enabled: true,
-                });
                 items.push(SettingsItem::RowSwitch {
                     label: tr("adaptive_border"),
                     on: self.config.adaptive_border,
@@ -415,45 +392,15 @@ impl SettingsApp {
                     on: self.config.motion_blur,
                     enabled: true,
                 });
-                items.push(SettingsItem::RowSwitch {
-                    label: tr("cover_rotate"),
-                    on: self.config.cover_rotate,
-                    enabled: true,
-                });
-                items.push(SettingsItem::RowSwitch {
-                    label: tr("audio_gate"),
-                    on: self.config.audio_gate,
-                    enabled: true,
-                });
-                items.push(SettingsItem::RowSwitch {
-                    label: tr("auto_gate"),
-                    on: self.config.auto_gate,
-                    enabled: self.config.audio_gate,
-                });
                 items.push(SettingsItem::GroupEnd);
-                items.push(SettingsItem::SectionHeader {
-                    label: tr("section_experimental"),
-                });
-                items.push(SettingsItem::GroupStart);
-                items.push(SettingsItem::RowSwitch {
-                    label: tr("mini_controls"),
-                    on: self.config.mini_controls,
-                    enabled: true,
-                });
-                items.push(SettingsItem::GroupEnd);
-                items.push(SettingsItem::Spacer { height: 16.0 });
+
                 items.push(SettingsItem::GroupStart);
                 items.push(SettingsItem::RowSourceSelect {
                     label: tr("island_style"),
                     options: vec![
                         (tr("style_default"), self.config.island_style == "default"),
                         (tr("style_glass"), self.config.island_style == "glass"),
-                        (tr("style_mica"), self.config.island_style == "mica"),
                         (tr("style_dynamic"), self.config.island_style == "dynamic"),
-                        (
-                            tr("style_liquid_glass"),
-                            self.config.island_style == "liquid_glass",
-                        ),
                     ],
                     enabled: true,
                 });
@@ -682,7 +629,7 @@ impl SettingsApp {
         let content_start_y = if self.active_page == 0 {
             SUB_TAB_START_Y + SUB_TAB_H + CONTENT_START_Y
         } else {
-            CONTENT_START_Y
+            50.0
         };
         self.cached_content_height = content_height(&self.cached_items, content_start_y);
         let scale = self
@@ -771,27 +718,24 @@ impl SettingsApp {
         self.switch_anim.set_target(0, self.config.adaptive_border);
         self.switch_anim.set_target(1, self.config.motion_blur);
         self.switch_anim.set_target(2, self.config.cover_rotate);
-        self.switch_anim.set_target(3, self.config.audio_gate);
-        self.switch_anim.set_target(4, self.config.auto_gate);
-        self.switch_anim.set_target(5, self.config.mini_controls);
-        self.switch_anim.set_target(6, self.config.auto_start);
-        self.switch_anim.set_target(7, self.config.auto_hide);
+        self.switch_anim.set_target(3, self.config.auto_start);
+        self.switch_anim.set_target(4, self.config.auto_hide);
         self.switch_anim
-            .set_target(8, self.config.check_for_updates);
-        self.switch_anim.set_target(9, self.config.smtc_enabled);
-        self.switch_anim.set_target(10, self.config.show_lyrics);
+            .set_target(5, self.config.check_for_updates);
+        self.switch_anim.set_target(6, self.config.smtc_enabled);
+        self.switch_anim.set_target(7, self.config.show_lyrics);
         let fb_on = if self.config.show_lyrics {
             self.config.lyrics_fallback
         } else {
             false
         };
-        self.switch_anim.set_target(11, fb_on);
+        self.switch_anim.set_target(8, fb_on);
         let fw_on = if self.config.show_lyrics {
             self.config.lyrics_scroll
         } else {
             false
         };
-        self.switch_anim.set_target(12, fw_on);
+        self.switch_anim.set_target(9, fw_on);
     }
 
     fn update_detected_apps(&mut self) {
@@ -883,8 +827,19 @@ impl SettingsApp {
 
             let canvas = sk_surface.canvas();
             canvas.reset_matrix();
-            canvas.clear(theme.win_bg);
+            canvas.clear(Color::TRANSPARENT);
             canvas.scale((scale, scale));
+
+            let win_rect = Rect::from_xywh(0.0, 0.0, win_w, win_h);
+            let win_rrect = skia_safe::RRect::new_rect_xy(win_rect, 12.0, 12.0);
+
+            canvas.save();
+            canvas.clip_rrect(win_rrect, skia_safe::ClipOp::Intersect, true);
+
+            let mut bg_paint = Paint::default();
+            bg_paint.set_anti_alias(true);
+            bg_paint.set_color(theme.win_bg);
+            canvas.draw_rect(win_rect, &bg_paint);
 
             self.draw_sidebar(canvas, &theme);
 
@@ -894,7 +849,7 @@ impl SettingsApp {
             let content_start_y = if self.active_page == 0 {
                 SUB_TAB_START_Y + SUB_TAB_H + CONTENT_START_Y
             } else {
-                CONTENT_START_Y
+                50.0
             };
 
             self.target_scroll_y = self.target_scroll_y.clamp(0.0, self.cached_max_scroll);
@@ -902,7 +857,7 @@ impl SettingsApp {
             let clip_start_y = if self.active_page == 0 {
                 SUB_TAB_START_Y + SUB_TAB_H
             } else {
-                0.0
+                50.0
             };
 
             canvas.save();
@@ -942,6 +897,18 @@ impl SettingsApp {
             }
 
             self.draw_popup(canvas, &theme);
+            canvas.restore();
+
+            // Draw a subtle rounded border around the window
+            let border_rect = Rect::from_xywh(0.5, 0.5, win_w - 1.0, win_h - 1.0);
+            let border_rrect = skia_safe::RRect::new_rect_xy(border_rect, 11.5, 11.5);
+            let mut border_paint = Paint::default();
+            border_paint.set_anti_alias(true);
+            border_paint.set_style(skia_safe::paint::Style::Stroke);
+            border_paint.set_stroke_width(1.0);
+            border_paint.set_color(theme.separator);
+            canvas.draw_rrect(border_rrect, &border_paint);
+
             let _ = buffer.present();
         }
 
@@ -956,6 +923,63 @@ impl SettingsApp {
         paint.set_color(theme.sidebar_bg);
         canvas.draw_rect(Rect::from_xywh(0.0, 0.0, SIDEBAR_W, self.win_h), &paint);
 
+        // Draw Apple-style Window Control Dots
+        let (red_color, yellow_color, green_color) = if self.focused {
+            (
+                Color::from_rgb(0xFF, 0x5F, 0x56),
+                Color::from_rgb(0xFF, 0xBD, 0x2E),
+                Color::from_rgb(0x27, 0xC9, 0x3F),
+            )
+        } else if self.is_light {
+            (
+                Color::from_rgb(0xE6, 0xE6, 0xE6),
+                Color::from_rgb(0xE6, 0xE6, 0xE6),
+                Color::from_rgb(0xE6, 0xE6, 0xE6),
+            )
+        } else {
+            (
+                Color::from_rgb(0x4D, 0x4D, 0x4D),
+                Color::from_rgb(0x4D, 0x4D, 0x4D),
+                Color::from_rgb(0x4D, 0x4D, 0x4D),
+            )
+        };
+
+        let radius = 6.0;
+        let red_center = (20.0, 24.0);
+        let yellow_center = (40.0, 24.0);
+        let green_center = (60.0, 24.0);
+
+        paint.set_color(red_color);
+        canvas.draw_circle(red_center, radius, &paint);
+
+        paint.set_color(yellow_color);
+        canvas.draw_circle(yellow_center, radius, &paint);
+
+        paint.set_color(green_color);
+        canvas.draw_circle(green_center, radius, &paint);
+
+        // Draw symbols if hovered and focused
+        if self.dots_hovered && self.focused {
+            let mut sym_paint = Paint::default();
+            sym_paint.set_anti_alias(true);
+            sym_paint.set_style(skia_safe::paint::Style::Stroke);
+            sym_paint.set_stroke_width(1.0);
+
+            // Red Close cross: x
+            sym_paint.set_color(Color::from_rgb(0x4C, 0x00, 0x02));
+            canvas.draw_line((17.5, 21.5), (22.5, 26.5), &sym_paint);
+            canvas.draw_line((22.5, 21.5), (17.5, 26.5), &sym_paint);
+
+            // Yellow Minimize line: -
+            sym_paint.set_color(Color::from_rgb(0x5C, 0x3E, 0x00));
+            canvas.draw_line((36.5, 24.0), (43.5, 24.0), &sym_paint);
+
+            // Green Maximize plus: +
+            sym_paint.set_color(Color::from_rgb(0x00, 0x4D, 0x02));
+            canvas.draw_line((57.0, 24.0), (63.0, 24.0), &sym_paint);
+            canvas.draw_line((60.0, 21.0), (60.0, 27.0), &sym_paint);
+        }
+
         let mut sep = Paint::default();
         sep.set_anti_alias(true);
         sep.set_color(theme.separator);
@@ -964,7 +988,7 @@ impl SettingsApp {
         canvas.draw_line((SIDEBAR_W, 0.0), (SIDEBAR_W, self.win_h), &sep);
 
         let pages = [tr("tab_general"), tr("tab_music"), tr("tab_about")];
-        let start_y = 20.0;
+        let start_y = 60.0;
 
         for (i, label) in pages.iter().enumerate() {
             let row_y = start_y + i as f32 * (SIDEBAR_ROW_H + 2.0);
@@ -972,14 +996,14 @@ impl SettingsApp {
             let row_w = SIDEBAR_W - SIDEBAR_PAD * 2.0;
 
             if self.active_page == i {
-                paint.set_color(theme.sidebar_sel);
+                paint.set_color(theme.accent);
                 canvas.draw_round_rect(
                     Rect::from_xywh(row_x, row_y, row_w, SIDEBAR_ROW_H),
                     SIDEBAR_SEL_RADIUS,
                     SIDEBAR_SEL_RADIUS,
                     &paint,
                 );
-                paint.set_color(theme.text_pri);
+                paint.set_color(Color::WHITE);
             } else {
                 let hover_val = self.anim.get(SIDEBAR_KEY_BASE + i as u64);
                 if hover_val > 0.005 {
@@ -996,10 +1020,65 @@ impl SettingsApp {
                 paint.set_color(theme.text_sec);
             }
 
+            // Draw macOS-style icon next to text
+            let icon_bg_rect = Rect::from_xywh(row_x + 8.0, row_y + 6.0, 20.0, 20.0);
+            let mut icon_bg_paint = Paint::default();
+            icon_bg_paint.set_anti_alias(true);
+
+            match i {
+                0 => {
+                    icon_bg_paint.set_color(Color::from_rgb(142, 142, 147)); // Gray
+                    canvas.draw_round_rect(icon_bg_rect, 5.0, 5.0, &icon_bg_paint);
+                    crate::icons::settings::draw_settings_icon(
+                        canvas,
+                        row_x + 18.0,
+                        row_y + 16.0,
+                        255,
+                        0.5,
+                        Color::WHITE,
+                    );
+                }
+                1 => {
+                    icon_bg_paint.set_color(Color::from_rgb(252, 60, 68)); // Pink/Red
+                    canvas.draw_round_rect(icon_bg_rect, 5.0, 5.0, &icon_bg_paint);
+                    crate::icons::music::draw_music_icon(
+                        canvas,
+                        row_x + 18.0,
+                        row_y + 16.0,
+                        255,
+                        0.5,
+                        Color::WHITE,
+                    );
+                }
+                2 => {
+                    icon_bg_paint.set_color(Color::from_rgb(0, 122, 255)); // Royal Blue
+                    canvas.draw_round_rect(icon_bg_rect, 5.0, 5.0, &icon_bg_paint);
+
+                    let mut info_paint = Paint::default();
+                    info_paint.set_anti_alias(true);
+                    info_paint.set_color(Color::WHITE);
+                    info_paint.set_stroke_width(1.2);
+
+                    info_paint.set_style(skia_safe::paint::Style::Stroke);
+                    canvas.draw_circle((row_x + 18.0, row_y + 16.0), 6.5, &info_paint);
+
+                    info_paint.set_style(skia_safe::paint::Style::Fill);
+                    canvas.draw_circle((row_x + 18.0, row_y + 13.0), 0.8, &info_paint);
+
+                    info_paint.set_style(skia_safe::paint::Style::Stroke);
+                    canvas.draw_line(
+                        (row_x + 18.0, row_y + 15.0),
+                        (row_x + 18.0, row_y + 18.5),
+                        &info_paint,
+                    );
+                }
+                _ => {}
+            }
+
             fm.draw_text_cached(DrawTextCachedParams {
                 canvas,
                 text: label,
-                x: row_x + 12.0,
+                x: row_x + 36.0,
                 y: row_y + 21.0,
                 size: 13.0,
                 bold: false,
@@ -1226,11 +1305,11 @@ impl SettingsApp {
         match self.active_page {
             0 => match self.active_sub_page {
                 0 => SwitchAnimator::new(&[]),
-                1 => SwitchAnimator::new_with_anims(&self.switch_anim, &[0, 1, 2, 3, 4, 5]),
-                2 => SwitchAnimator::new_with_anims(&self.switch_anim, &[6, 7, 8]),
+                1 => SwitchAnimator::new_with_anims(&self.switch_anim, &[0, 1, 2]),
+                2 => SwitchAnimator::new_with_anims(&self.switch_anim, &[3, 4, 5]),
                 _ => SwitchAnimator::new(&[]),
             },
-            1 => SwitchAnimator::new_with_anims(&self.switch_anim, &[9, 10, 11, 12]),
+            1 => SwitchAnimator::new_with_anims(&self.switch_anim, &[6, 7, 8, 9]),
             _ => SwitchAnimator::new(&[]),
         }
     }
@@ -1259,7 +1338,8 @@ impl ApplicationHandler for SettingsApp {
             .with_min_inner_size(LogicalSize::new(WIN_W as f64, WIN_H as f64))
             .with_position(LogicalPosition::new(win_x, win_y))
             .with_resizable(true)
-            .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
+            .with_decorations(false)
+            .with_transparent(true)
             .with_window_icon(get_app_icon());
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         self.window = Some(window.clone());
@@ -1277,6 +1357,12 @@ impl ApplicationHandler for SettingsApp {
     fn window_event(&mut self, _el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => _el.exit(),
+            WindowEvent::Focused(focused) => {
+                self.focused = focused;
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+            }
             WindowEvent::ThemeChanged(theme) if self.config.settings_theme == "system" => {
                 self.is_light = theme == winit::window::Theme::Light;
                 if let Some(win) = &self.window {
@@ -1364,6 +1450,15 @@ impl ApplicationHandler for SettingsApp {
                     || (new_pos.1 - self.last_hover_mouse_pos.1).abs() > 0.5;
                 self.logical_mouse_pos = new_pos;
 
+                let (mx, my) = self.logical_mouse_pos;
+                let is_hovering_dots = (10.0..=70.0).contains(&mx) && (14.0..=34.0).contains(&my);
+                if is_hovering_dots != self.dots_hovered {
+                    self.dots_hovered = is_hovering_dots;
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                }
+
                 if let Some(popup) = &mut self.popup {
                     let (pmx, pmy) = self.logical_mouse_pos;
                     let new_hover = popup.hit_test_item(pmx, pmy);
@@ -1380,7 +1475,7 @@ impl ApplicationHandler for SettingsApp {
                     let (mx, my) = self.logical_mouse_pos;
                     let mut new_hover: i32 = -1;
                     if mx < SIDEBAR_W {
-                        let start_y = 20.0;
+                        let start_y = 60.0;
                         for i in 0..3 {
                             let row_y = start_y + i as f32 * (SIDEBAR_ROW_H + 2.0);
                             if my >= row_y
@@ -1517,7 +1612,33 @@ impl ApplicationHandler for SettingsApp {
                 button: MouseButton::Left,
                 ..
             } => {
-                self.handle_click();
+                let (mx, my) = self.logical_mouse_pos;
+                let is_on_red = (mx - 20.0).powi(2) + (my - 24.0).powi(2) <= 36.0;
+                let is_on_yellow = (mx - 40.0).powi(2) + (my - 24.0).powi(2) <= 36.0;
+                let is_on_green = (mx - 60.0).powi(2) + (my - 24.0).powi(2) <= 36.0;
+
+                if is_on_red {
+                    _el.exit();
+                } else if is_on_yellow {
+                    if let Some(win) = &self.window {
+                        win.set_minimized(true);
+                    }
+                } else if is_on_green {
+                    if let Some(win) = &self.window {
+                        let maximized = win.is_maximized();
+                        win.set_maximized(!maximized);
+                    }
+                } else {
+                    let is_in_sidebar_title = mx < SIDEBAR_W && my < 60.0;
+                    let is_in_content_title = mx >= SIDEBAR_W && my < 50.0;
+                    if (is_in_sidebar_title || is_in_content_title) && self.popup.is_none() {
+                        if let Some(win) = &self.window {
+                            let _ = win.drag_window();
+                        }
+                    } else {
+                        self.handle_click(_el);
+                    }
+                }
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,

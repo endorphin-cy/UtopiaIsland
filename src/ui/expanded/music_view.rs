@@ -87,15 +87,9 @@ pub fn get_pause_btn_rect(
     w: f32,
     _h: f32,
     scale: f32,
-    cover_shape: &str,
+    _cover_shape: &str,
 ) -> (f32, f32, f32, f32) {
-    let (img_size, img_y) = if cover_shape == "circle" {
-        let s = 72.0 * scale * 1.08;
-        let y = oy + 24.0 * scale - (s - 72.0 * scale) / 2.0;
-        (s, y)
-    } else {
-        (72.0 * scale, oy + 24.0 * scale)
-    };
+    let (img_size, img_y) = (72.0 * scale, oy + 24.0 * scale);
     let bar_y = img_y + img_size + 18.0 * scale;
     let btn_cy = bar_y + 42.0 * scale;
     let hit = 40.0 * scale;
@@ -109,15 +103,9 @@ pub fn get_prev_btn_rect(
     w: f32,
     _h: f32,
     scale: f32,
-    cover_shape: &str,
+    _cover_shape: &str,
 ) -> (f32, f32, f32, f32) {
-    let (img_size, img_y) = if cover_shape == "circle" {
-        let s = 72.0 * scale * 1.08;
-        let y = oy + 24.0 * scale - (s - 72.0 * scale) / 2.0;
-        (s, y)
-    } else {
-        (72.0 * scale, oy + 24.0 * scale)
-    };
+    let (img_size, img_y) = (72.0 * scale, oy + 24.0 * scale);
     let bar_y = img_y + img_size + 18.0 * scale;
     let btn_cy = bar_y + 42.0 * scale;
     let hit = 36.0 * scale;
@@ -131,15 +119,9 @@ pub fn get_next_btn_rect(
     w: f32,
     _h: f32,
     scale: f32,
-    cover_shape: &str,
+    _cover_shape: &str,
 ) -> (f32, f32, f32, f32) {
-    let (img_size, img_y) = if cover_shape == "circle" {
-        let s = 72.0 * scale * 1.08;
-        let y = oy + 24.0 * scale - (s - 72.0 * scale) / 2.0;
-        (s, y)
-    } else {
-        (72.0 * scale, oy + 24.0 * scale)
-    };
+    let (img_size, img_y) = (72.0 * scale, oy + 24.0 * scale);
     let bar_y = img_y + img_size + 18.0 * scale;
     let btn_cy = bar_y + 42.0 * scale;
     let hit = 36.0 * scale;
@@ -154,23 +136,16 @@ pub fn get_progress_bar_rect(
     _media: &MediaInfo,
     music_active: bool,
     scale: f32,
-    cover_shape: &str,
+    _cover_shape: &str,
 ) -> Option<(f32, f32, f32, f32)> {
     if !music_active {
         return None;
     }
-    let (img_size, img_x, img_y) = if cover_shape == "circle" {
-        let s = 72.0 * scale * 1.08;
-        let x = ox + 28.0 * scale - (s - 72.0 * scale) / 2.0;
-        let y = oy + 24.0 * scale - (s - 72.0 * scale) / 2.0;
-        (s, x, y)
-    } else {
-        (72.0 * scale, ox + 28.0 * scale, oy + 24.0 * scale)
-    };
+    let (img_size, img_y) = (72.0 * scale, oy + 24.0 * scale);
     let bar_y = img_y + img_size + 18.0 * scale;
     let time_w = 36.0 * scale;
-    let bar_full_left = img_x;
-    let bar_full_right = img_x + w - 48.0 * scale;
+    let bar_full_left = ox + 28.0 * scale;
+    let bar_full_right = ox + w - 28.0 * scale;
     let bar_left = bar_full_left + time_w + 4.0 * scale;
     let bar_right = bar_full_right - time_w - 4.0 * scale;
     let hit_h = 16.0 * scale;
@@ -241,6 +216,7 @@ pub fn clear_cover_cache() {
     });
 }
 
+#[allow(dead_code)]
 pub struct DrawMusicPageParams<'a> {
     pub canvas: &'a Canvas,
     pub ox: f32,
@@ -293,8 +269,8 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
         viz_h_scale,
         use_blur,
         font_size,
-        cover_shape,
-        cover_rotate,
+        cover_shape: _,
+        cover_rotate: _,
         dt,
         text_color,
         text_color_sec,
@@ -313,21 +289,13 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
         );
     }
     let base_img_size = 72.0 * scale;
-    let (img_size, img_x, img_y) = if cover_shape == "circle" {
-        let s = base_img_size * 1.08;
-        let x = ox + 28.0 * scale - (s - base_img_size) / 2.0;
-        let y = oy + 24.0 * scale - (s - base_img_size) / 2.0;
-        (s, x, y)
-    } else {
-        (base_img_size, ox + 28.0 * scale, oy + 24.0 * scale)
-    };
+    let (img_size, img_x, img_y) = (base_img_size, ox + 36.0 * scale, oy + 24.0 * scale);
     let image_to_draw = if music_active {
         get_cached_media_image(media)
     } else {
         None
     };
 
-    let pause_s = PAUSE_SPRING.with(|cell| cell.borrow().value);
     let mut effective_is_playing = media.is_playing;
     LOCAL_PLAY_STATE.with(|cell| {
         let mut opt = cell.borrow_mut();
@@ -343,13 +311,10 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
     let pause_t = PAUSE_ANIM.with(|cell| {
         let mut v = cell.borrow_mut();
         let target = if effective_is_playing { 1.0_f32 } else { 0.0 };
-        if pause_s < 0.15 {
+        let factor = (0.10 * dt).min(1.0);
+        *v += (target - *v) * factor;
+        if (*v - target).abs() < 0.003 {
             *v = target;
-        } else {
-            *v += (target - *v) * 0.12;
-            if (*v - target).abs() < 0.005 {
-                *v = target;
-            }
         }
         *v
     });
@@ -361,14 +326,23 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
         let start = *cell.borrow();
         match start {
             Some(s) => {
-                let t = (s.elapsed().as_secs_f32() / 0.5).min(1.0);
+                let t = (s.elapsed().as_secs_f32() / 0.6).min(1.0);
                 if t >= 1.0 {
                     *cell.borrow_mut() = None;
                     (1.0_f32, 0.0_f32, false)
                 } else {
-                    let cos_val = (t * std::f32::consts::PI).cos();
-                    let sx = cos_val.abs().max(0.05);
-                    let blur = (1.0 - cos_val.abs()) * 10.0 * scale;
+                    let eased = if t < 0.5 {
+                        let t2 = t * 2.0;
+                        t2 * t2 * 0.5
+                    } else {
+                        let t2 = (t - 0.5) * 2.0;
+                        let c1 = 1.2_f32;
+                        0.5 + (1.0 + c1 * (t2 - 1.0).powi(2) + (t2 - 1.0).powi(3) * (c1 + 1.0))
+                            * 0.5
+                    };
+                    let cos_val = (eased * std::f32::consts::PI).cos();
+                    let sx = cos_val.abs().max(0.02);
+                    let blur = (1.0 - cos_val.abs()).powf(0.6) * 8.0 * scale;
                     (sx, blur, cos_val > 0.0)
                 }
             }
@@ -393,22 +367,6 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
     let img_cy = img_y + img_size / 2.0;
     canvas.translate((img_cx, img_cy));
 
-    let is_rotating = cover_rotate && cover_shape == "circle" && effective_is_playing;
-    let rotation_angle = COVER_ROTATION.with(|cell| {
-        let mut angle = cell.borrow_mut();
-        if is_rotating {
-            *angle += 0.5 * dt;
-            if *angle >= 360.0 {
-                *angle -= 360.0;
-            }
-        }
-        *angle
-    });
-
-    if cover_rotate && cover_shape == "circle" {
-        canvas.rotate(rotation_angle, None);
-    }
-
     canvas.scale((cover_scale * flip_scale_x, cover_scale));
     canvas.translate((-img_cx, -img_cy));
 
@@ -423,27 +381,15 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
         canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&blur_paint));
     }
 
-    if cover_shape == "circle" {
-        canvas.clip_rrect(
-            RRect::new_rect_xy(
-                Rect::from_xywh(img_x, img_y, img_size, img_size),
-                img_size / 2.0,
-                img_size / 2.0,
-            ),
-            skia_safe::ClipOp::Intersect,
-            true,
-        );
-    } else {
-        canvas.clip_rrect(
-            RRect::new_rect_xy(
-                Rect::from_xywh(img_x, img_y, img_size, img_size),
-                14.0 * scale,
-                14.0 * scale,
-            ),
-            skia_safe::ClipOp::Intersect,
-            true,
-        );
-    }
+    canvas.clip_rrect(
+        RRect::new_rect_xy(
+            Rect::from_xywh(img_x, img_y, img_size, img_size),
+            14.0 * scale,
+            14.0 * scale,
+        ),
+        skia_safe::ClipOp::Intersect,
+        true,
+    );
     if let Some(img) = cover_img {
         let mut img_paint = Paint::default();
         img_paint.set_anti_alias(true);
@@ -481,7 +427,7 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
     }
     canvas.restore();
     let text_x = img_x + img_size + 16.0 * scale;
-    let max_text_w = w - (text_x - ox) - 100.0 * scale;
+    let max_text_w = w - (text_x - ox) - 70.0 * scale;
     let title_y = img_y + 26.0 * scale;
     let mut text_paint = Paint::default();
     text_paint.set_anti_alias(true);
@@ -606,11 +552,11 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
             "--:--".to_string()
         };
 
-        let bar_full_left = img_x;
-        let bar_full_right = img_x + w - 48.0 * scale;
+        let bar_full_left = ox + 36.0 * scale;
+        let bar_full_right = ox + w - 36.0 * scale;
 
-        let bar_left = bar_full_left + time_w + 4.0 * scale;
-        let bar_right = bar_full_right - time_w - 4.0 * scale;
+        let bar_left = ox + 28.0 * scale + time_w + 4.0 * scale;
+        let bar_right = ox + w - 28.0 * scale - time_w - 4.0 * scale;
         let bar_total_w = bar_right - bar_left;
 
         let hover_t = PROGRESS_HOVER.with(|cell| {
@@ -639,25 +585,25 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
             text_color.b(),
         ));
 
-        let elapsed_w = FontManager::global().measure_text_cached(
-            &elapsed_str,
-            time_font_size,
-            FontStyle::normal(),
-        );
         draw_text_cached(DrawTextCachedParams {
             canvas,
             text: &elapsed_str,
-            x: bar_left - elapsed_w - 6.0 * scale,
+            x: bar_full_left,
             y: text_baseline_y,
             size: time_font_size,
             bold: false,
             paint: &time_paint,
         });
 
+        let remaining_w = FontManager::global().measure_text_cached(
+            &remaining_str,
+            time_font_size,
+            FontStyle::normal(),
+        );
         draw_text_cached(DrawTextCachedParams {
             canvas,
             text: &remaining_str,
-            x: bar_right + 6.0 * scale,
+            x: bar_full_right - remaining_w,
             y: text_baseline_y,
             size: time_font_size,
             bold: false,
@@ -883,7 +829,7 @@ pub fn draw_music_page(params: DrawMusicPageParams<'_>) -> bool {
         smooth_factors: (0.6, 0.08),
     });
 
-    is_rotating
+    false
 }
 
 pub fn draw_visualizer(params: DrawVisualizerParams<'_>) {
