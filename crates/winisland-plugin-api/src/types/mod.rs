@@ -1,4 +1,3 @@
-pub mod content;
 pub mod context;
 pub mod i18n;
 pub mod metadata;

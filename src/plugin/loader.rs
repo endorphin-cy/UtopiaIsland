@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use super::types::{
-    AnimationConfig, ContentProvider, IslandContent, Plugin, PluginError, PluginGetInstanceFn,
+    AnimationConfig, ContentProvider, Plugin, PluginError, PluginGetInstanceFn,
     PluginHandle, PluginInstanceC, PluginMetadata, PluginResultC, PluginType, Shortcut, ShortcutC,
     ShortcutProvider, ThemeColors, ThemeProvider,
 };
@@ -184,15 +184,6 @@ impl Plugin for NativePlugin {
 }
 
 impl ContentProvider for NativePlugin {
-    fn get_content(&self) -> Option<IslandContent> {
-        let vtable = self.vtable();
-        vtable.get_content.map(|f| {
-            // SAFETY: calling through vtable with the opaque handle from the same DLL.
-            let c = unsafe { f(self.handle) };
-            IslandContent::from(&c)
-        })
-    }
-
     fn on_click(&mut self) {
         let vtable = self.vtable();
         if let Some(f) = vtable.on_click {

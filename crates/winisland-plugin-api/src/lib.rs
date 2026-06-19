@@ -57,10 +57,6 @@ pub mod packager;
 // ---------------------------------------------------------------------------
 
 pub use host::HostApiC;
-pub use types::content::{
-    ISLAND_CONTENT_TAG_MUSIC, ISLAND_CONTENT_TAG_NOTIFICATION, ISLAND_CONTENT_TAG_STATUS,
-    IslandContentC,
-};
 pub use types::context::{
     ContextDataC, ContextIdC, HostStateC, MediaSourceC, PRIORITY_HIGH, PRIORITY_LOW,
     PRIORITY_MEDIUM,

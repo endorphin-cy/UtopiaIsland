@@ -1,5 +1,4 @@
 use crate::HostApiC;
-use crate::types::content::IslandContentC;
 use crate::types::metadata::PluginMetadataC;
 use crate::types::shortcut::ShortcutC;
 use crate::types::theme::{AnimationConfigC, ThemeColorsC};
@@ -29,12 +28,6 @@ pub struct PluginVTable {
     /// **Must be non-null.** After this returns, the handle pointer
     /// becomes invalid.
     pub destroy: unsafe extern "C" fn(PluginHandle),
-
-    /// Return the current island content to display.
-    ///
-    /// Required for [`PluginType::Content`] plugins. The host polls this
-    /// at a regular interval.
-    pub get_content: Option<unsafe extern "C" fn(PluginHandle) -> IslandContentC>,
 
     /// Called when the user clicks on the plugin's content area.
     pub on_click: Option<unsafe extern "C" fn(PluginHandle)>,
