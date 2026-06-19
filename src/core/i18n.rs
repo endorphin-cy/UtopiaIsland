@@ -123,7 +123,7 @@ impl I18n {
     fn new() -> Self {
         let (disk_langs, disk_files) = discover_disk_langs();
         let mut available = disk_langs;
-        let mut file_map = disk_files;
+        let file_map = disk_files;
 
         for (_filename, content) in &embedded_langs() {
             if let Some((code, name)) = parse_lang_header(content) {
