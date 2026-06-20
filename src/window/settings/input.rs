@@ -321,16 +321,23 @@ impl SettingsApp {
                     } else if label == &tr("island_style") {
                         let selected_idx = match self.config.island_style.as_str() {
                             "glass" => 1,
-                            "dynamic" => 2,
+                            "mica" => 2,
+                            "dynamic" => 3,
                             _ => 0,
                         };
                         self.popup = Some(PopupState::new(
                             PopupKind::IslandStyle,
                             Rect::from_xywh(btn_x, btn_y, POPUP_BTN_W, POPUP_BTN_H),
-                            vec![tr("style_default"), tr("style_glass"), tr("style_dynamic")],
+                            vec![
+                                tr("style_default"),
+                                tr("style_glass"),
+                                tr("style_mica"),
+                                tr("style_dynamic"),
+                            ],
                             vec![
                                 "default".to_string(),
                                 "glass".to_string(),
+                                "mica".to_string(),
                                 "dynamic".to_string(),
                             ],
                             selected_idx,

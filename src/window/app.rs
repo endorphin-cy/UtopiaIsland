@@ -71,6 +71,7 @@ pub struct App {
     old_lyric_text: String,
     lyric_transition: f32,
     idle_timer: Instant,
+    last_glass_refresh: Instant,
     spring_hide: Spring,
     auto_hidden: bool,
     is_dragging: bool,
@@ -133,6 +134,7 @@ impl Default for App {
             old_lyric_text: String::new(),
             lyric_transition: 1.0,
             idle_timer: Instant::now(),
+            last_glass_refresh: Instant::now(),
             spring_hide: Spring::new(0.0),
             auto_hidden: false,
             is_dragging: false,
@@ -655,7 +657,18 @@ impl App {
             self.smtc.set_allowed_apps(self.config.smtc_apps.clone());
 
             if old_style != self.config.island_style {
-                crate::utils::backdrop::clear_dynamic_bg_cache();
+                crate::utils::backdrop::clear_mica_cache();
+                crate::utils::glass::clear_glass_cache();
+                crate::utils::backdrop::clear_blurred_cover_cache();
+                if let Ok(handle) = window.window_handle() {
+                    let raw = handle.as_raw();
+                    if let RawWindowHandle::Win32(win32_handle) = raw {
+                        let hwnd = windows::Win32::Foundation::HWND(win32_handle.hwnd.get() as _);
+                        if old_style == "mica" {
+                            crate::utils::backdrop::disable_mica(hwnd);
+                        }
+                    }
+                }
             }
 
             if old_mini_shape != self.config.mini_cover_shape
@@ -877,6 +890,12 @@ impl ApplicationHandler for App {
                     self.win_x,
                     self.win_y
                 );
+                if self.config.island_style == "mica" {
+                    crate::utils::backdrop::clear_mica_cache();
+                }
+                if self.config.island_style == "glass" || self.config.island_style == "dynamic" {
+                    crate::utils::glass::clear_glass_cache();
+                }
             }
             // Retry GPU context creation up to 3 times with 500ms delay.
             // Handles transient GPU unavailability (e.g., after taskkill from mpv script).
@@ -1117,6 +1136,7 @@ impl ApplicationHandler for App {
                                     global_scale: self.config.global_scale,
                                     hide_progress: self.spring_hide.value,
                                     dock_position: self.config.dock_position,
+                                    base_h: self.config.base_height * self.config.global_scale,
                                 },
                                 media: crate::core::render::MediaParams {
                                     media: &media_info,
@@ -1274,7 +1294,7 @@ impl ApplicationHandler for App {
                 );
                 self.last_media_title = media.title.clone();
                 crate::ui::expanded::music_view::trigger_cover_flip();
-                crate::utils::backdrop::clear_dynamic_bg_cache();
+                crate::utils::backdrop::clear_blurred_cover_cache();
                 window.request_redraw();
             }
         }
@@ -1488,12 +1508,25 @@ impl ApplicationHandler for App {
         self.spring_r.update_dt(target_r, 0.10, 0.68, dt);
         self.spring_view.update_dt(target_view, 0.12, 0.68, dt);
 
+        let is_glass_or_mica = self.config.island_style == "glass"
+            || self.config.island_style == "dynamic"
+            || self.config.island_style == "mica";
+        let should_periodic_redraw = is_glass_or_mica
+            && !self.auto_hidden
+            && !self.manually_hidden
+            && self.last_glass_refresh.elapsed().as_millis() >= 1000;
+
+        if should_periodic_redraw {
+            self.last_glass_refresh = Instant::now();
+        }
+
         if self.expanded
             || (music_active && media.is_playing)
             || self.spring_w.velocity.abs() > 0.001
             || self.spring_h.velocity.abs() > 0.001
             || self.spring_r.velocity.abs() > 0.001
             || self.spring_view.velocity.abs() > 0.001
+            || should_periodic_redraw
         {
             window.request_redraw();
         }
