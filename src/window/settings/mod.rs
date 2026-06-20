@@ -401,6 +401,7 @@ impl SettingsApp {
                     options: vec![
                         (tr("style_default"), self.config.island_style == "default"),
                         (tr("style_glass"), self.config.island_style == "glass"),
+                        (tr("style_mica"), self.config.island_style == "mica"),
                         (tr("style_dynamic"), self.config.island_style == "dynamic"),
                     ],
                     enabled: true,

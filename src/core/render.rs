@@ -5,7 +5,7 @@ use crate::ui::expanded::music_view::{
     get_cached_media_image, get_cached_media_image_with_key, get_media_palette,
 };
 use crate::ui::expanded::widget_view::draw_widget_page;
-use crate::utils::backdrop::{get_dynamic_bg_color, get_last_valid_color};
+use crate::utils::backdrop::{get_dynamic_bg_color, get_last_valid_color, get_mica_background};
 use crate::utils::font::{DrawTextCachedParams, FontManager};
 use crate::utils::glass::get_glass_background;
 use skia_safe::canvas::SrcRectConstraint;
@@ -50,7 +50,6 @@ pub struct LyricsParams<'a> {
     pub lyric_scroll_offset: f32,
 }
 
-#[allow(dead_code)]
 pub struct WindowParams {
     pub win_x: i32,
     pub win_y: i32,
@@ -121,7 +120,14 @@ pub fn draw_island(
         lyric_transition,
         lyric_scroll_offset,
     } = lyrics;
-    let WindowParams { win_x, win_y, .. } = window;
+    let WindowParams {
+        win_x,
+        win_y,
+        monitor_x,
+        monitor_y,
+        monitor_w,
+        monitor_h,
+    } = window;
     let StyleParams {
         island_style,
         use_blur,
@@ -213,6 +219,36 @@ pub fn draw_island(
             darken.set_anti_alias(true);
             darken.set_blend_mode(skia_safe::BlendMode::Multiply);
             canvas.draw_rect(rect, &darken);
+        } else {
+            let mut bg_paint = Paint::default();
+            bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
+            bg_paint.set_anti_alias(true);
+            canvas.draw_rrect(rrect, &bg_paint);
+        }
+    } else if island_style == "mica" {
+        let screen_x = win_x + offset_x as i32;
+        let screen_y = win_y + offset_y as i32;
+        canvas.save();
+        canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+        if let Some(bg_img) = get_mica_background(
+            screen_x,
+            screen_y,
+            current_w as u32,
+            current_h as u32,
+            monitor_x,
+            monitor_y,
+            monitor_w,
+            monitor_h,
+        ) {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+            canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
+
+            let mut overlay = Paint::default();
+            overlay.set_color(Color::from_argb(110, 32, 32, 32));
+            overlay.set_anti_alias(true);
+            canvas.draw_rrect(rrect, &overlay);
         } else {
             let mut bg_paint = Paint::default();
             bg_paint.set_color(Color::from_argb(205, 32, 32, 36));

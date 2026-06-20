@@ -656,6 +656,16 @@ impl App {
 
             if old_style != self.config.island_style {
                 crate::utils::backdrop::clear_dynamic_bg_cache();
+                crate::utils::backdrop::clear_mica_cache();
+                if let Ok(handle) = window.window_handle() {
+                    let raw = handle.as_raw();
+                    if let RawWindowHandle::Win32(win32_handle) = raw {
+                        let hwnd = windows::Win32::Foundation::HWND(win32_handle.hwnd.get() as _);
+                        if old_style == "mica" {
+                            crate::utils::backdrop::disable_mica(hwnd);
+                        }
+                    }
+                }
             }
 
             if old_mini_shape != self.config.mini_cover_shape
@@ -877,6 +887,9 @@ impl ApplicationHandler for App {
                     self.win_x,
                     self.win_y
                 );
+                if self.config.island_style == "mica" {
+                    crate::utils::backdrop::clear_mica_cache();
+                }
             }
             // Retry GPU context creation up to 3 times with 500ms delay.
             // Handles transient GPU unavailability (e.g., after taskkill from mpv script).
