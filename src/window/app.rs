@@ -657,9 +657,9 @@ impl App {
             self.smtc.set_allowed_apps(self.config.smtc_apps.clone());
 
             if old_style != self.config.island_style {
-                crate::utils::backdrop::clear_dynamic_bg_cache();
                 crate::utils::backdrop::clear_mica_cache();
                 crate::utils::glass::clear_glass_cache();
+                crate::utils::backdrop::clear_blurred_cover_cache();
                 if let Ok(handle) = window.window_handle() {
                     let raw = handle.as_raw();
                     if let RawWindowHandle::Win32(win32_handle) = raw {
@@ -1293,7 +1293,7 @@ impl ApplicationHandler for App {
                 );
                 self.last_media_title = media.title.clone();
                 crate::ui::expanded::music_view::trigger_cover_flip();
-                crate::utils::backdrop::clear_dynamic_bg_cache();
+                crate::utils::backdrop::clear_blurred_cover_cache();
                 window.request_redraw();
             }
         }
