@@ -62,6 +62,12 @@ pub fn get_glass_background(
     result
 }
 
+pub fn clear_glass_cache() {
+    GLASS_CACHE.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+}
+
 /// Captures the island region + margin from the desktop, heavily blurs,
 /// crops to the island area, then blends with a dark base colour to
 /// guarantee the signature dark frosted-glass look.
