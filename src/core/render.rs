@@ -36,6 +36,7 @@ pub struct LayoutParams {
     pub global_scale: f32,
     pub hide_progress: f32,
     pub dock_position: DockPosition,
+    pub base_h: f32,
 }
 
 pub struct MediaParams<'a> {
@@ -109,6 +110,7 @@ pub fn draw_island(
         global_scale,
         hide_progress,
         dock_position,
+        base_h,
     } = layout;
     let MediaParams {
         media,
@@ -181,6 +183,17 @@ pub fn draw_island(
         base_y + hide_y_offset
     } else {
         base_y - hide_y_offset
+    };
+
+    let stable_base_y = if dock_bottom {
+        os_h as f32 - PADDING / 2.0 - base_h
+    } else {
+        PADDING / 2.0
+    };
+    let stable_offset_y = if dock_bottom {
+        stable_base_y + hide_y_offset
+    } else {
+        stable_base_y - hide_y_offset
     };
 
     let rect = Rect::from_xywh(offset_x, offset_y, current_w, current_h);
@@ -425,7 +438,7 @@ pub fn draw_island(
                     let (size, ix, iy) = (
                         base_size,
                         offset_x + 10.0 * global_scale,
-                        offset_y + (current_h - base_size) / 2.0,
+                        stable_offset_y + (base_h - base_size) / 2.0,
                     );
                     let mut paint = Paint::default();
                     paint.set_anti_alias(true);
@@ -470,7 +483,7 @@ pub fn draw_island(
                 }
                 let palette = &palette;
                 let viz_x = offset_x + current_w - 17.0 * global_scale;
-                let viz_y = offset_y + current_h / 2.0;
+                let viz_y = stable_offset_y + base_h / 2.0;
                 draw_visualizer(DrawVisualizerParams {
                     canvas,
                     x: viz_x,
@@ -507,7 +520,7 @@ pub fn draw_island(
 
                         canvas.save();
                         let clip_rect =
-                            Rect::from_xywh(space_left, offset_y, available_w, current_h);
+                            Rect::from_xywh(space_left, stable_offset_y, available_w, base_h);
                         canvas.clip_rect(clip_rect, ClipOp::Intersect, true);
 
                         if use_blur {
@@ -532,7 +545,7 @@ pub fn draw_island(
                                     ));
                                 }
 
-                                let text_y = offset_y + current_h / 2.0 + 4.0 * global_scale
+                                let text_y = stable_offset_y + base_h / 2.0 + 4.0 * global_scale
                                     - (10.0 * global_scale * lyric_transition);
                                 let old_lx = if text_centered {
                                     let w = FontManager::global().measure_text_cached(
@@ -576,8 +589,8 @@ pub fn draw_island(
                                     ));
                                 }
 
-                                let text_y = offset_y
-                                    + current_h / 2.0
+                                let text_y = stable_offset_y
+                                    + base_h / 2.0
                                     + 4.0 * global_scale
                                     + (10.0 * global_scale * (1.0 - lyric_transition));
                                 let cur_lx = if text_centered {
@@ -601,7 +614,7 @@ pub fn draw_island(
                                 });
                             }
                         } else {
-                            let text_y = offset_y + current_h / 2.0 + 4.0 * global_scale;
+                            let text_y = stable_offset_y + base_h / 2.0 + 4.0 * global_scale;
                             if lyric_transition < 0.5 && !old_lyric.is_empty() {
                                 let mut text_paint = Paint::default();
                                 text_paint.set_anti_alias(true);
@@ -685,9 +698,9 @@ pub fn draw_island(
                 ));
                 let text_x = offset_x + 20.0 * global_scale;
                 let text_w = current_w - 40.0 * global_scale;
-                let text_y = offset_y + current_h / 2.0 - font_sz * 0.3;
+                let text_y = stable_offset_y + base_h / 2.0 - font_sz * 0.3;
                 canvas.save();
-                let clip = Rect::from_xywh(text_x, offset_y, text_w, current_h);
+                let clip = Rect::from_xywh(text_x, stable_offset_y, text_w, base_h);
                 canvas.clip_rect(clip, ClipOp::Intersect, true);
                 draw_text_cached(DrawTextCachedParams {
                     canvas,

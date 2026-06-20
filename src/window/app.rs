@@ -1136,6 +1136,7 @@ impl ApplicationHandler for App {
                                     global_scale: self.config.global_scale,
                                     hide_progress: self.spring_hide.value,
                                     dock_position: self.config.dock_position,
+                                    base_h: self.config.base_height * self.config.global_scale,
                                 },
                                 media: crate::core::render::MediaParams {
                                     media: &media_info,
