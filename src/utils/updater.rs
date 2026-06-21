@@ -160,7 +160,8 @@ async fn do_beta_check(app_dir: &Path) {
 
     if needs_update {
         log::info!("Update available (Beta): -> {}", remote_timestamp);
-        let title_w: Vec<u16> = format!("{}\0", tr("update_available_title"))
+        let channel_name = tr("channel_beta");
+        let title_w: Vec<u16> = format!("{} ({})\0", tr("update_available_title"), channel_name)
             .encode_utf16()
             .collect();
         let text_w: Vec<u16> = tr("update_available_desc")
@@ -253,7 +254,8 @@ async fn do_stable_check(app_dir: &Path) {
             tag_name
         );
 
-        let title_w: Vec<u16> = format!("{}\0", tr("update_available_title"))
+        let channel_name = tr("channel_stable");
+        let title_w: Vec<u16> = format!("{} ({})\0", tr("update_available_title"), channel_name)
             .encode_utf16()
             .collect();
         let text_w: Vec<u16> = tr("update_available_desc")
