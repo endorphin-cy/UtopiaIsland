@@ -23,18 +23,6 @@ pub struct VersionInfo {
     pub timestamp: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-struct GithubRelease {
-    tag_name: String,
-    assets: Vec<GithubAsset>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct GithubAsset {
-    name: String,
-    browser_download_url: String,
-}
-
 const UPDATE_URL_JSON: &str =
     "https://github.com/Eatgrapes/WinIsland/releases/download/nightly/version_info.json";
 const UPDATE_URL_EXE: &str =
@@ -200,36 +188,57 @@ async fn do_beta_check(app_dir: &Path) {
 }
 
 async fn do_stable_check(app_dir: &Path) {
-    let latest_release_url = "https://api.github.com/repos/Eatgrapes/WinIsland/releases/latest";
-    let remote_json_str = match HTTP_CLIENT.get(latest_release_url).send().await {
-        Ok(resp) => match resp.text().await {
-            Ok(s) => s,
-            Err(_) => {
-                log::warn!("Update check (Stable): failed to read latest release info");
-                return;
-            }
-        },
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("WinIsland-Updater")
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
         Err(_) => {
-            log::warn!("Update check (Stable): HTTP request failed for latest release info");
+            log::warn!("Update check (Stable): failed to build redirect-disabled HTTP client");
             return;
         }
     };
 
-    let release: GithubRelease = match serde_json::from_str(&remote_json_str) {
+    let resp = match client
+        .get("https://github.com/Eatgrapes/WinIsland/releases/latest")
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             log::warn!(
-                "Update check (Stable): failed to parse release JSON: {:?}",
+                "Update check (Stable): HTTP request failed for latest release page redirect: {:?}",
                 e
             );
             return;
         }
     };
 
-    let remote_version = release
-        .tag_name
-        .trim_start_matches('v')
-        .trim_start_matches('V');
+    let tag_name = if resp.status().is_redirection() {
+        if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
+            loc.to_str()
+                .ok()
+                .and_then(|loc_str| loc_str.split("/tag/").last().map(|tag| tag.to_string()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let tag_name = match tag_name {
+        Some(t) => t,
+        None => {
+            log::warn!(
+                "Update check (Stable): failed to extract latest release tag from redirect location"
+            );
+            return;
+        }
+    };
+
+    let remote_version = tag_name.trim_start_matches('v').trim_start_matches('V');
     let needs_update = is_version_newer(crate::core::config::APP_VERSION, remote_version);
 
     if needs_update {
@@ -239,14 +248,10 @@ async fn do_stable_check(app_dir: &Path) {
             remote_version
         );
 
-        // Find the download URL for WinIsland.exe
-        let download_url = match release.assets.iter().find(|a| a.name == "WinIsland.exe") {
-            Some(asset) => asset.browser_download_url.clone(),
-            None => {
-                log::warn!("Update check (Stable): no WinIsland.exe asset found in release");
-                return;
-            }
-        };
+        let download_url = format!(
+            "https://github.com/Eatgrapes/WinIsland/releases/download/{}/WinIsland.exe",
+            tag_name
+        );
 
         let title_w: Vec<u16> = format!("{}\0", tr("update_available_title"))
             .encode_utf16()
