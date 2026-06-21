@@ -67,7 +67,7 @@ pub fn start_update_checker() {
         // Initial check
         if crate::core::persistence::load_config().check_for_updates {
             log::info!("Update checker started");
-            do_check(&app_dir).await;
+            do_check(&app_dir, false).await;
         } else {
             log::info!("Update checker: disabled in config");
         }
@@ -81,35 +81,60 @@ pub fn start_update_checker() {
 
             let interval_secs = config.update_check_interval * 3600.0;
             if last_check.elapsed().as_secs_f32() >= interval_secs {
-                do_check(&app_dir).await;
+                do_check(&app_dir, false).await;
                 last_check = tokio::time::Instant::now();
             }
         }
     });
 }
 
-async fn do_check(app_dir: &Path) {
+pub fn check_updates_manually() {
+    std::thread::spawn(|| {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to build runtime for manual update check: {:?}", e);
+                return;
+            }
+        };
+        rt.block_on(async {
+            let app_dir = get_app_dir();
+            do_check(&app_dir, true).await;
+        });
+    });
+}
+
+async fn do_check(app_dir: &Path, manual: bool) {
     let config = crate::core::persistence::load_config();
     let channel = config.update_channel.as_str();
 
     if channel == "beta" {
-        do_beta_check(app_dir).await;
+        do_beta_check(app_dir, manual).await;
     } else {
-        do_stable_check(app_dir).await;
+        do_stable_check(app_dir, manual).await;
     }
 }
 
-async fn do_beta_check(app_dir: &Path) {
+async fn do_beta_check(app_dir: &Path, manual: bool) {
     let remote_json_str = match HTTP_CLIENT.get(UPDATE_URL_JSON).send().await {
         Ok(resp) => match resp.text().await {
             Ok(s) => s,
             Err(_) => {
                 log::warn!("Update check (Beta): failed to read remote version info");
+                if manual {
+                    show_error_box(tr("update_failed_title"), tr("update_failed_desc")).await;
+                }
                 return;
             }
         },
         Err(_) => {
             log::warn!("Update check (Beta): HTTP request failed for version_info.json");
+            if manual {
+                show_error_box(tr("update_failed_title"), tr("update_failed_desc")).await;
+            }
             return;
         }
     };
@@ -118,6 +143,9 @@ async fn do_beta_check(app_dir: &Path) {
         Ok(info) => info,
         Err(_) => {
             log::warn!("Update check (Beta): failed to parse remote version info");
+            if manual {
+                show_error_box(tr("update_failed_title"), tr("update_failed_desc")).await;
+            }
             return;
         }
     };
@@ -126,6 +154,9 @@ async fn do_beta_check(app_dir: &Path) {
         Some(t) => t,
         None => {
             log::warn!("Update check (Beta): remote version info does not contain timestamp");
+            if manual {
+                show_error_box(tr("update_failed_title"), tr("update_failed_desc")).await;
+            }
             return;
         }
     };
@@ -185,10 +216,12 @@ async fn do_beta_check(app_dir: &Path) {
         {
             perform_update(UPDATE_URL_EXE, remote_json_str, app_dir.to_path_buf()).await;
         }
+    } else if manual {
+        show_error_box(tr("update_no_update_title"), tr("update_no_update_desc")).await;
     }
 }
 
-async fn do_stable_check(app_dir: &Path) {
+async fn do_stable_check(app_dir: &Path, manual: bool) {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .user_agent("WinIsland-Updater")
@@ -198,6 +231,9 @@ async fn do_stable_check(app_dir: &Path) {
         Ok(c) => c,
         Err(_) => {
             log::warn!("Update check (Stable): failed to build redirect-disabled HTTP client");
+            if manual {
+                show_error_box(tr("update_failed_title"), tr("update_failed_desc")).await;
+            }
             return;
         }
     };
@@ -213,6 +249,9 @@ async fn do_stable_check(app_dir: &Path) {
                 "Update check (Stable): HTTP request failed for latest release page redirect: {:?}",
                 e
             );
+            if manual {
+                show_error_box(tr("update_failed_title"), tr("update_failed_desc")).await;
+            }
             return;
         }
     };
@@ -235,6 +274,9 @@ async fn do_stable_check(app_dir: &Path) {
             log::warn!(
                 "Update check (Stable): failed to extract latest release tag from redirect location"
             );
+            if manual {
+                show_error_box(tr("update_failed_title"), tr("update_failed_desc")).await;
+            }
             return;
         }
     };
@@ -289,6 +331,9 @@ async fn do_stable_check(app_dir: &Path) {
             "Update check (Stable): current version is up-to-date ({})",
             crate::core::config::APP_VERSION
         );
+        if manual {
+            show_error_box(tr("update_no_update_title"), tr("update_no_update_desc")).await;
+        }
     }
 }
 
