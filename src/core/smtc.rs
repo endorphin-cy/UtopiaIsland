@@ -96,6 +96,8 @@ enum PlaybackCommand {
 
 pub struct SmtcListener {
     info_rx: watch::Receiver<MediaInfo>,
+    #[allow(dead_code)]
+    companion_info_rx: watch::Receiver<MediaInfo>,
     seek_tx: mpsc::UnboundedSender<u64>,
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
     lyrics_source_tx: mpsc::UnboundedSender<String>,
@@ -108,6 +110,7 @@ pub struct SmtcListener {
 impl SmtcListener {
     pub fn new(source: String, fallback: bool, allowed: Vec<String>) -> Self {
         let (info_tx, info_rx) = watch::channel(MediaInfo::default());
+        let (companion_info_tx, companion_info_rx) = watch::channel(MediaInfo::default());
         let (seek_tx, seek_rx) = mpsc::unbounded_channel();
         let (playback_tx, playback_rx) = mpsc::unbounded_channel();
         let (lyrics_source_tx, lyrics_source_rx) = mpsc::unbounded_channel();
@@ -125,6 +128,7 @@ impl SmtcListener {
         tokio::task::spawn_blocking(move || {
             smtc_poll_loop(
                 info_tx,
+                companion_info_tx,
                 seek_rx,
                 playback_rx,
                 lyrics_source_rx,
@@ -137,6 +141,7 @@ impl SmtcListener {
 
         Self {
             info_rx,
+            companion_info_rx,
             seek_tx,
             playback_tx,
             lyrics_source_tx,
@@ -167,6 +172,11 @@ impl SmtcListener {
         self.info_rx.borrow().clone()
     }
 
+    #[allow(dead_code)]
+    pub fn get_companion_info(&self) -> MediaInfo {
+        self.companion_info_rx.borrow().clone()
+    }
+
     pub fn request_seek(&self, position_ms: u64) {
         let _ = self.seek_tx.send(position_ms);
     }
@@ -193,6 +203,7 @@ impl Drop for SmtcListener {
 #[allow(clippy::too_many_arguments)]
 fn smtc_poll_loop(
     info_tx: watch::Sender<MediaInfo>,
+    companion_info_tx: watch::Sender<MediaInfo>,
     mut seek_rx: mpsc::UnboundedReceiver<u64>,
     mut playback_rx: mpsc::UnboundedReceiver<PlaybackCommand>,
     mut lyrics_source_rx: mpsc::UnboundedReceiver<String>,
@@ -273,6 +284,7 @@ fn smtc_poll_loop(
         update_media_info(
             &manager,
             &info_tx,
+            &companion_info_tx,
             &current_lyrics_source,
             current_lyrics_fallback,
             current_lyrics_local_dir.as_deref(),
@@ -438,6 +450,7 @@ fn smtc_poll_loop(
             update_media_info(
                 &current_manager,
                 &info_tx,
+                &companion_info_tx,
                 &current_lyrics_source,
                 current_lyrics_fallback,
                 current_lyrics_local_dir.as_deref(),
@@ -459,6 +472,7 @@ fn smtc_poll_loop(
             update_media_info(
                 &current_manager,
                 &info_tx,
+                &companion_info_tx,
                 &current_lyrics_source,
                 current_lyrics_fallback,
                 current_lyrics_local_dir.as_deref(),
@@ -478,6 +492,7 @@ fn smtc_poll_loop(
 fn update_media_info(
     manager: &GlobalSystemMediaTransportControlsSessionManager,
     info_tx: &watch::Sender<MediaInfo>,
+    companion_info_tx: &watch::Sender<MediaInfo>,
     lyrics_source: &str,
     lyrics_fallback: bool,
     local_dir: Option<&str>,
@@ -490,9 +505,10 @@ fn update_media_info(
         *allowed_apps = auto_allow_new_apps(manager, allowed_apps);
     }
 
-    if let Some(session) = get_target_session(manager, allowed_apps) {
+    let sessions = get_target_sessions(manager, allowed_apps);
+    if let Some(session) = sessions.first() {
         *last_session_seen = Instant::now();
-        let _ = fetch_properties(&session, info_tx, lyrics_source, lyrics_fallback, local_dir);
+        let _ = fetch_properties(session, info_tx, lyrics_source, lyrics_fallback, local_dir);
         *last_was_playing = info_tx.borrow().is_playing;
     } else if *last_was_playing {
         let info = info_tx.borrow();
@@ -508,6 +524,16 @@ fn update_media_info(
             drop(info);
             let _ = info_tx.send(MediaInfo::default());
             log::info!("SMTC: paused session lost for >15s, cleared media info");
+        }
+    }
+
+    if let Some(session) = sessions.get(1) {
+        let _ = fetch_companion_properties(session, companion_info_tx);
+    } else {
+        let info = companion_info_tx.borrow();
+        if !info.title.is_empty() {
+            drop(info);
+            let _ = companion_info_tx.send(MediaInfo::default());
         }
     }
 }
@@ -571,10 +597,18 @@ fn get_target_session(
     mgr: &GlobalSystemMediaTransportControlsSessionManager,
     allowed: &[String],
 ) -> Option<GlobalSystemMediaTransportControlsSession> {
+    get_target_sessions(mgr, allowed).into_iter().next()
+}
+
+fn get_target_sessions(
+    mgr: &GlobalSystemMediaTransportControlsSessionManager,
+    allowed: &[String],
+) -> Vec<GlobalSystemMediaTransportControlsSession> {
     if allowed.is_empty() {
-        return None;
+        return Vec::new();
     }
-    let mut audio_session = None;
+    let mut playing_sessions = Vec::new();
+    let mut other_sessions = Vec::new();
     if let Ok(sessions) = mgr.GetSessions()
         && let Ok(count) = sessions.Size()
     {
@@ -594,31 +628,33 @@ fn get_target_session(
                 if let Ok(pb_info) = session.GetPlaybackInfo()
                         && let Ok(status) = pb_info.PlaybackStatus()
                             && status == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
-                                return Some(session);
+                                playing_sessions.push(session);
+                                continue;
                             }
-                if audio_session.is_none() {
-                    audio_session = Some(session);
-                }
+                other_sessions.push(session);
             }
         }
     }
-    if let Some(session) = audio_session {
-        return Some(session);
+
+    playing_sessions.extend(other_sessions);
+    if !playing_sessions.is_empty() {
+        return playing_sessions;
     }
+
     if let Ok(session) = mgr.GetCurrentSession() {
         if let Ok(id) = session.SourceAppUserModelId() {
             let app_id = id.to_string();
             if !allowed.iter().any(|a| a == &app_id) {
-                return None;
+                return Vec::new();
             }
         } else {
-            return None;
+            return Vec::new();
         }
         if is_music_session(&session) {
-            return Some(session);
+            return vec![session];
         }
     }
-    None
+    Vec::new()
 }
 
 fn is_music_session(session: &GlobalSystemMediaTransportControlsSession) -> bool {
@@ -909,5 +945,146 @@ fn fetch_properties(
             }
         });
     }
+    Ok(())
+}
+
+fn fetch_companion_properties(
+    session: &GlobalSystemMediaTransportControlsSession,
+    info_tx: &watch::Sender<MediaInfo>,
+) -> windows::core::Result<()> {
+    if !is_music_session(session) {
+        let info = info_tx.borrow();
+        if !info.title.is_empty() {
+            drop(info);
+            let _ = info_tx.send(MediaInfo::default());
+        }
+        return Ok(());
+    }
+
+    let props = session.TryGetMediaPropertiesAsync()?.join()?;
+    let pb_info = session.GetPlaybackInfo()?;
+    let is_playing = pb_info.PlaybackStatus()? == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+
+    let new_title = props.Title()?.to_string();
+    let new_artist = props.Artist()?.to_string();
+    let new_album = props.AlbumTitle()?.to_string();
+
+    let mut position_ms = 0;
+    let mut duration_secs = 0;
+    let mut duration_ms = 0;
+    if let Ok(tl) = session.GetTimelineProperties() {
+        if let Ok(pos) = tl.Position() {
+            let raw = pos.Duration;
+            if raw > 0 {
+                position_ms = (raw / 10_000) as u64;
+            }
+        }
+        if let Ok(end) = tl.EndTime() {
+            let raw = end.Duration;
+            if raw > 0 {
+                duration_secs = (raw / 10_000_000) as u64;
+                duration_ms = (raw / 10_000) as u64;
+            }
+        }
+    }
+
+    let mut should_fetch_thumbnail = false;
+    {
+        let mut info = info_tx.borrow().clone();
+        let song_changed =
+            info.title != new_title || info.artist != new_artist || info.album != new_album;
+        if song_changed {
+            info.title = new_title.clone();
+            info.artist = new_artist.clone();
+            info.album = new_album.clone();
+            info.thumbnail = None;
+            info.thumbnail_hash = 0;
+            info.last_thumbnail_fetch = Instant::now();
+            should_fetch_thumbnail = true;
+        } else if info.thumbnail.is_none()
+            && !new_title.is_empty()
+            && info.last_thumbnail_fetch.elapsed() >= Duration::from_secs(5)
+        {
+            info.last_thumbnail_fetch = Instant::now();
+            should_fetch_thumbnail = true;
+        }
+
+        info.is_playing = is_playing;
+        info.position_ms = position_ms;
+        info.last_smtc_pos = position_ms;
+        info.duration_secs = duration_secs;
+        info.duration_ms = duration_ms;
+        info.last_update = Instant::now();
+        let _ = info_tx.send(info);
+    }
+
+    if should_fetch_thumbnail && !new_title.is_empty() {
+        let info_tx_clone = info_tx.clone();
+        let session_clone = session.clone();
+        let title_clone = new_title.clone();
+        let artist_clone = new_artist.clone();
+        tokio::task::spawn_blocking(move || {
+            for attempt in 0..5 {
+                let res = (|| -> windows::core::Result<(String, String, Vec<u8>)> {
+                    let props = session_clone.TryGetMediaPropertiesAsync()?.join()?;
+                    let fetched_title = props.Title()?.to_string();
+                    let fetched_artist = props.Artist()?.to_string();
+                    if fetched_title != title_clone || fetched_artist != artist_clone {
+                        return Err(windows::core::Error::new(
+                            windows::core::HRESULT(-2),
+                            "Stale properties",
+                        ));
+                    }
+                    let thumb_ref = props.Thumbnail()?;
+                    let stream = thumb_ref.OpenReadAsync()?.join()?;
+                    let size = stream.Size()?;
+                    if size == 0 {
+                        return Err(windows::core::Error::new(
+                            windows::core::HRESULT(-1),
+                            "Empty thumbnail",
+                        ));
+                    }
+                    let buffer = windows::Storage::Streams::Buffer::Create(size as u32)?;
+                    let res_buffer = stream
+                        .ReadAsync(
+                            &buffer,
+                            size as u32,
+                            windows::Storage::Streams::InputStreamOptions::None,
+                        )?
+                        .join()?;
+                    let reader = windows::Storage::Streams::DataReader::FromBuffer(&res_buffer)?;
+                    let mut bytes = vec![0u8; size as usize];
+                    reader.ReadBytes(&mut bytes)?;
+                    Ok((fetched_title, fetched_artist, bytes))
+                })();
+
+                if let Ok((_t, _a, bytes)) = res {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    bytes.hash(&mut hasher);
+                    let hash = hasher.finish();
+
+                    let current = info_tx_clone.borrow();
+                    if current.title == title_clone
+                        && current.artist == artist_clone
+                        && current.thumbnail_hash != hash
+                    {
+                        drop(current);
+                        let mut new_info = info_tx_clone.borrow().clone();
+                        new_info.thumbnail = Some(Arc::new(bytes));
+                        new_info.thumbnail_hash = hash;
+                        let _ = info_tx_clone.send(new_info);
+                    }
+                    return;
+                }
+
+                if attempt < 4 {
+                    std::thread::sleep(Duration::from_millis(400));
+                }
+            }
+        });
+    }
+
     Ok(())
 }

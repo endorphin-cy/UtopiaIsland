@@ -146,7 +146,7 @@ pub struct AppConfig {
 }
 
 fn default_island_style() -> String {
-    "default".to_string()
+    "liquid".to_string()
 }
 
 fn default_show_lyrics() -> bool {
@@ -259,7 +259,7 @@ impl Default for AppConfig {
             expanded_height: 200.0,
             adaptive_border: false,
             motion_blur: true,
-            island_style: "default".to_string(),
+            island_style: "liquid".to_string(),
             smtc_enabled: true,
             smtc_apps: Vec::new(),
             smtc_known_apps: Vec::new(),

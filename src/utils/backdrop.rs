@@ -19,11 +19,13 @@ thread_local! {
     static BLURRED_COVER_CACHE: RefCell<Option<BlurredCoverCache>> = const { RefCell::new(None) };
 }
 
+#[allow(dead_code)]
 struct BlurredCoverCache {
     cache_key: String,
     blurred_image: Image,
 }
 
+#[allow(dead_code)]
 struct MicaCache {
     monitor_x: i32,
     monitor_y: i32,
@@ -53,7 +55,7 @@ pub fn disable_mica(hwnd: HWND) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(dead_code, clippy::too_many_arguments)]
 pub fn get_mica_background(
     screen_x: i32,
     screen_y: i32,
@@ -138,6 +140,7 @@ pub fn clear_mica_cache() {
     });
 }
 
+#[allow(dead_code)]
 fn capture_and_blur_mica(
     monitor_x: i32,
     monitor_y: i32,
@@ -236,6 +239,7 @@ fn capture_and_blur_mica(
     }
 }
 
+#[allow(dead_code)]
 pub fn get_blurred_cover_background(media: &MediaInfo) -> Option<Image> {
     if media.title.is_empty() {
         return None;

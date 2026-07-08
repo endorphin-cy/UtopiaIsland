@@ -77,13 +77,29 @@ impl ContextManager {
 
     /// 返回当前 mini 应显示的内容
     pub fn current_mini(&self) -> Option<MiniContent> {
-        if let Some(ctx) = self.plugin_contexts.iter().rev().find(|c| c.mini_render) {
-            return Some(MiniContent::Plugin(Box::new(ctx.clone())));
+        if let Some(ctx) = self.current_plugin_mini() {
+            return Some(MiniContent::Plugin(Box::new(ctx)));
         }
         if self.smtc_active {
             return Some(MiniContent::Music);
         }
         None
+    }
+
+    pub fn current_plugin_mini(&self) -> Option<PluginContext> {
+        self.plugin_contexts
+            .iter()
+            .rev()
+            .find(|c| c.mini_render)
+            .cloned()
+    }
+
+    pub fn current_priority_mini(&self) -> Option<PluginContext> {
+        self.plugin_contexts
+            .iter()
+            .rev()
+            .find(|c| c.mini_render && c.priority >= Priority::High)
+            .cloned()
     }
 
     pub fn tick(&mut self) {
@@ -103,6 +119,15 @@ impl ContextManager {
 
         let mut to_remove = Vec::new();
         for ctx in &self.plugin_contexts {
+            if ctx.priority >= Priority::High
+                && ctx.mini_render
+                && now.duration_since(ctx.created_at)
+                    > Duration::from_secs((ctx.duration_sec as u64).max(1))
+            {
+                to_remove.push(ctx.id.clone());
+                continue;
+            }
+
             if let Some(timeout_start) = ctx.mini_timeout_start
                 && now.duration_since(timeout_start) > Duration::from_secs(MINI_TIMEOUT_SECS)
             {

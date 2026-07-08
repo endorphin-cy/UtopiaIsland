@@ -1,7 +1,8 @@
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, HWND_TOPMOST, PostMessageW, SW_RESTORE,
-    SWP_NOACTIVATE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_CLOSE,
+    SWP_NOACTIVATE, SetForegroundWindow, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, WDA_EXCLUDEFROMCAPTURE, WM_CLOSE,
 };
 use windows::core::PCWSTR;
 
@@ -75,5 +76,35 @@ pub fn modify_window_style(hwnd: HWND, add_flags: isize, remove_flags: isize) {
 pub fn set_window_topmost(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
         let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+    }
+}
+
+pub fn exclude_from_capture(hwnd: HWND) {
+    unsafe {
+        if let Err(err) = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) {
+            log::warn!("SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) failed: {err:?}");
+        }
+    }
+}
+
+// SAFETY: Re-asserts topmost Z-order position to overlay Windows notification
+// toasts. Called periodically to ensure the island stays above notification
+// popups that may have been created after the last SetWindowPos call.
+// Uses HWND_TOPMOST as hWndInsertAfter to place at the top of the topmost
+// band. SWP_NOACTIVATE prevents focus stealing.
+#[allow(dead_code)]
+pub fn enforce_overlay_topmost(hwnd: HWND) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE
+                | windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE,
+        );
     }
 }

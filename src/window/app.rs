@@ -15,6 +15,7 @@ use crate::ui::expanded::music_view::{
 use crate::utils::blur::calculate_blur_sigmas;
 use crate::utils::color::get_island_border_weights;
 use crate::utils::icon::get_app_icon;
+use crate::utils::liquid_glass::LiquidGlassRenderer;
 use crate::utils::mouse::{
     get_global_cursor_pos, is_cursor_hidden, is_foreground_fullscreen, is_left_button_pressed,
     is_point_in_rect,
@@ -25,6 +26,7 @@ use softbuffer::{Context, Surface};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
@@ -97,6 +99,7 @@ pub struct App {
     plugin_mgr: PluginManager,
     plugin_media_source: Option<crate::core::smtc::MediaInfo>,
     pending_install: Option<mpsc::Receiver<InstallResult>>,
+    liquid_renderer: Mutex<Option<LiquidGlassRenderer>>,
 }
 
 impl Default for App {
@@ -160,6 +163,7 @@ impl Default for App {
             plugin_mgr: PluginManager::default(),
             plugin_media_source: None,
             pending_install: None,
+            liquid_renderer: Mutex::new(LiquidGlassRenderer::new()),
         }
     }
 }
@@ -301,12 +305,50 @@ impl App {
     }
 
     fn enforce_topmost(window: &Window, win_x: i32, win_y: i32, os_w: u32, os_h: u32) {
-        if let Ok(handle) = window.window_handle()
-            && let RawWindowHandle::Win32(raw) = handle.as_raw()
-        {
-            let hwnd = HWND(raw.hwnd.get() as *mut core::ffi::c_void);
+        if let Some(hwnd) = Self::window_hwnd(window) {
             crate::utils::win32::set_window_topmost(hwnd, win_x, win_y, os_w as i32, os_h as i32);
         }
+    }
+
+    fn window_hwnd(window: &Window) -> Option<HWND> {
+        let handle = window.window_handle().ok()?;
+        match handle.as_raw() {
+            RawWindowHandle::Win32(raw) => Some(HWND(raw.hwnd.get() as _)),
+            _ => None,
+        }
+    }
+
+    fn refresh_capture_exclusion(window: &Window) {
+        if let Some(hwnd) = Self::window_hwnd(window) {
+            crate::utils::win32::exclude_from_capture(hwnd);
+        }
+    }
+
+    fn clear_surface_buffers(surface: &mut Surface<Arc<Window>, Arc<Window>>) {
+        for _ in 0..2 {
+            let Ok(mut buffer) = surface.buffer_mut() else {
+                break;
+            };
+            buffer.fill(0);
+            if let Err(err) = buffer.present() {
+                log::warn!("Present failed while clearing surface buffers: {err:?}");
+                break;
+            }
+        }
+    }
+
+    fn resize_surface(surface: &mut Surface<Arc<Window>, Arc<Window>>, width: u32, height: u32) {
+        let Some(width) = std::num::NonZeroU32::new(width) else {
+            return;
+        };
+        let Some(height) = std::num::NonZeroU32::new(height) else {
+            return;
+        };
+        if let Err(err) = surface.resize(width, height) {
+            log::warn!("Surface resize failed: {err:?}");
+            return;
+        }
+        Self::clear_surface_buffers(surface);
     }
 
     fn compute_window_position(
@@ -659,6 +701,7 @@ impl App {
             if old_style != self.config.island_style {
                 crate::utils::backdrop::clear_mica_cache();
                 crate::utils::glass::clear_glass_cache();
+                crate::utils::liquid_glass::clear_liquid_cache();
                 crate::utils::backdrop::clear_blurred_cover_cache();
                 if let Ok(handle) = window.window_handle() {
                     let raw = handle.as_raw();
@@ -696,12 +739,11 @@ impl App {
                 self.os_w = new_os_w;
                 self.os_h = new_os_h;
                 let _ = window.request_inner_size(PhysicalSize::new(self.os_w, self.os_h));
+                Self::refresh_capture_exclusion(window);
                 if let Some(surface) = self.surface.as_mut() {
-                    let _ = surface.resize(
-                        std::num::NonZeroU32::new(self.os_w.max(1)).unwrap(),
-                        std::num::NonZeroU32::new(self.os_h.max(1)).unwrap(),
-                    );
+                    Self::resize_surface(surface, self.os_w.max(1), self.os_h.max(1));
                 }
+                window.request_redraw();
             }
 
             if let Some(monitor) = Self::get_target_monitor(window, self.config.monitor_index) {
@@ -851,6 +893,7 @@ impl ApplicationHandler for App {
                     WS_MAXIMIZEBOX.0 as isize | WS_THICKFRAME.0 as isize,
                 );
             }
+            Self::refresh_capture_exclusion(&window);
 
             self.window = Some(window.clone());
             log::info!(
@@ -892,6 +935,9 @@ impl ApplicationHandler for App {
                 );
                 if self.config.island_style == "mica" {
                     crate::utils::backdrop::clear_mica_cache();
+                }
+                if self.config.island_style == "liquid" {
+                    crate::utils::liquid_glass::clear_liquid_cache();
                 }
                 if self.config.island_style == "glass" || self.config.island_style == "dynamic" {
                     crate::utils::glass::clear_glass_cache();
@@ -965,12 +1011,7 @@ impl ApplicationHandler for App {
             };
             let context = gpu_ctx;
             let mut surface = gpu_surface;
-            if let Ok(mut buf) = surface.buffer_mut() {
-                for p in buf.iter_mut() {
-                    *p = 0;
-                }
-                let _ = buf.present();
-            }
+            Self::clear_surface_buffers(&mut surface);
             self.context = Some(context);
             self.surface = Some(surface);
             let is_light = window.theme() == Some(winit::window::Theme::Light);
@@ -981,6 +1022,7 @@ impl ApplicationHandler for App {
             );
             Self::enforce_topmost(&window, self.win_x, self.win_y, self.os_w, self.os_h);
             window.set_visible(true);
+            Self::refresh_capture_exclusion(&window);
             window.request_redraw();
         }
     }
@@ -996,8 +1038,27 @@ impl ApplicationHandler for App {
                         tray.update_theme(is_light);
                     }
                 }
-                WindowEvent::Resized(_) if win.is_maximized() => {
-                    win.set_maximized(false);
+                WindowEvent::Resized(new_size) => {
+                    Self::refresh_capture_exclusion(win);
+                    if win.is_maximized() {
+                        win.set_maximized(false);
+                    }
+                    if let Some(surface) = self.surface.as_mut() {
+                        Self::resize_surface(
+                            surface,
+                            new_size.width.max(1),
+                            new_size.height.max(1),
+                        );
+                    }
+                    win.request_redraw();
+                }
+                WindowEvent::ScaleFactorChanged { .. } => {
+                    Self::refresh_capture_exclusion(win);
+                    if let Some(surface) = self.surface.as_mut() {
+                        let size = win.inner_size();
+                        Self::resize_surface(surface, size.width.max(1), size.height.max(1));
+                    }
+                    win.request_redraw();
                 }
                 WindowEvent::CloseRequested => (),
                 WindowEvent::DroppedFile(path)
@@ -1121,7 +1182,14 @@ impl ApplicationHandler for App {
                         self.ctx_mgr.tick();
                         let mini_content = self.ctx_mgr.current_mini();
 
+                        let hwnd = self
+                            .window
+                            .as_ref()
+                            .and_then(|window| Self::window_hwnd(window))
+                            .unwrap_or(HWND(std::ptr::null_mut()));
+
                         let widget_animating = draw_island(
+                            hwnd,
                             surface,
                             crate::core::render::DrawIslandParams {
                                 layout: crate::core::render::LayoutParams {
@@ -1168,6 +1236,7 @@ impl ApplicationHandler for App {
                                     dt,
                                 },
                                 mini_content,
+                                liquid_renderer: Some(&self.liquid_renderer),
                             },
                         );
                         if widget_animating && let Some(win) = &self.window {
@@ -1271,6 +1340,11 @@ impl ApplicationHandler for App {
                         "normal"
                     }
                 );
+                Self::refresh_capture_exclusion(&window);
+                if let Some(surface) = self.surface.as_mut() {
+                    Self::clear_surface_buffers(surface);
+                }
+                window.request_redraw();
             }
         }
 
@@ -1509,6 +1583,7 @@ impl ApplicationHandler for App {
         self.spring_view.update_dt(target_view, 0.12, 0.68, dt);
 
         let is_glass_or_mica = self.config.island_style == "glass"
+            || self.config.island_style == "liquid"
             || self.config.island_style == "dynamic"
             || self.config.island_style == "mica";
         let should_periodic_redraw = is_glass_or_mica
