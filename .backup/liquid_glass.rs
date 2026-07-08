@@ -1,14 +1,9 @@
-#![allow(dead_code)]
-
 use skia_safe::{AlphaType, ColorType, Data, ISize, Image, ImageInfo, images};
 use std::cell::RefCell;
 use std::sync::Mutex;
 use std::time::Instant;
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowDisplayAffinity, SetWindowDisplayAffinity, ShowWindow, SW_HIDE, SW_SHOW, WDA_EXCLUDEFROMCAPTURE, WINDOW_DISPLAY_AFFINITY};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowDisplayAffinity, SW_HIDE, SW_SHOW, SetWindowDisplayAffinity, ShowWindow,
-    WDA_EXCLUDEFROMCAPTURE, WINDOW_DISPLAY_AFFINITY,
-};
 
 type GlassCacheEntry = (Image, Instant, i32, i32, u32, u32);
 
@@ -17,10 +12,10 @@ thread_local! {
 }
 
 // =============================================================================
-// Uniform buffers �?match WGSL structs exactly
+// Uniform buffers 闁?match WGSL structs exactly
 // =============================================================================
 
-/// Kawase blur uniform �?16 bytes
+/// Kawase blur uniform 闁?16 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct BlurParams {
@@ -29,7 +24,7 @@ struct BlurParams {
     _pad: f32,
 }
 
-/// Liquid glass uniform �?64 bytes
+/// Liquid glass uniform 闁?64 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct LiquidParams {
@@ -42,9 +37,7 @@ struct LiquidParams {
     _pad0: [f32; 2],          // 24
     tint: [f32; 4],           // 32
     curvature_strength: f32,  // 48
-    margin_x: f32,            // 52
-    margin_y: f32,            // 56
-    _pad1: f32,               // 60 �?total 64
+    _pad1: [f32; 3],          // 52 闁?total 64
 }
 
 const _: () = assert!(std::mem::size_of::<BlurParams>() == 16);
@@ -118,7 +111,7 @@ fn generate_displacement_map(
 }
 
 // =============================================================================
-// LiquidGlassRenderer �?Dual-Pass Pipeline with Offset Capture
+// LiquidGlassRenderer 闁?Dual-Pass Pipeline with Offset Capture
 //
 // Anti-feedback: captures desktop from a horizontally offset position
 // (same technique as glass.rs) to avoid self-capture stacking.
@@ -133,8 +126,6 @@ pub struct LiquidGlassRenderer {
     blur_sampler: wgpu::Sampler,
     glass_pipeline: wgpu::ComputePipeline,
     glass_bind_group_layout: wgpu::BindGroupLayout,
-    overlay_pipeline: wgpu::ComputePipeline,
-    overlay_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl LiquidGlassRenderer {
@@ -164,12 +155,6 @@ impl LiquidGlassRenderer {
         let glass_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("LiquidGlass Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/liquid_glass.wgsl").into()),
-        });
-        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("LiquidGlass Overlay Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/liquid_glass_overlay.wgsl").into(),
-            ),
         });
 
         // Blur BGL: input tex + output storage + uniform + sampler
@@ -264,44 +249,6 @@ impl LiquidGlassRenderer {
                 ],
             });
 
-        // Overlay BGL: output storage + uniform + displacement tex (no input capture)
-        let overlay_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("LiquidGlass Overlay BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
         let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Kawase Blur Pipeline Layout"),
             bind_group_layouts: &[Some(&blur_bind_group_layout)],
@@ -331,21 +278,6 @@ impl LiquidGlassRenderer {
             cache: None,
         });
 
-        let overlay_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("LiquidGlass Overlay Pipeline Layout"),
-                bind_group_layouts: &[Some(&overlay_bind_group_layout)],
-                immediate_size: 0,
-            });
-        let overlay_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("LiquidGlass Overlay Pipeline"),
-            layout: Some(&overlay_pipeline_layout),
-            module: &overlay_shader,
-            entry_point: Some("liquid_glass_overlay_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-
         let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Kawase Blur Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -366,8 +298,6 @@ impl LiquidGlassRenderer {
             blur_sampler,
             glass_pipeline,
             glass_bind_group_layout,
-            overlay_pipeline,
-            overlay_bind_group_layout,
         })
     }
 
@@ -387,312 +317,47 @@ impl LiquidGlassRenderer {
             return None;
         }
 
-        let margin = (w.max(h) / 8).clamp(16, 48) as i32;
-        let cap_w = w + margin as u32 * 2;
-        let cap_h = h + margin as u32 * 2;
-        let raw_pixels = unsafe {
-            crate::utils::wgc_capture::get_wgc_background(
-                hwnd,
-                screen_x - margin,
-                screen_y - margin,
-                cap_w,
-                cap_h,
-            )
-        }?;
-        self.run_shader(
-            &raw_pixels,
-            w,
-            h,
-            cap_w,
-            cap_h,
-            margin,
-            blur_sigma,
-            expansion_progress,
-            time,
-        )
+        let raw_pixels = unsafe { capture_region(hwnd, screen_x, screen_y, w, h)? };
+        self.run_shader(&raw_pixels, w, h, blur_sigma, expansion_progress, time)
     }
 
-    /// Capture-free overlay render ? desktop shows through transparent window.
-    /// Only edge effects are rendered: Fresnel glow, curvature, ambient diffuse.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)]
-    pub fn render_overlay(
-        &self,
-        w: u32,
-        h: u32,
-        expansion_progress: f32,
-        time: f32,
-    ) -> Option<Image> {
-        if w == 0 || h == 0 || w > 2048 || h > 2048 {
-            return None;
-        }
-
-        let output_extent = wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        };
-
-        // Displacement map (same as always, no capture needed)
-        let disp_pixels = generate_displacement_map(w, h, 0.3, 0.2, 0.6);
-        let disp_texture =
-            self.upload_texture_overlay("DisplacementMap", output_extent, &disp_pixels, w, h);
-        let disp_view = disp_texture.create_view(&Default::default());
-
-        // Output texture
-        let output_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Overlay Output"),
-            size: output_extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let output_view = output_texture.create_view(&Default::default());
-
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct OverlayParams {
-            fresnel_power: f32,
-            fresnel_intensity: f32,
-            curvature_strength: f32,
-            _std140_pad0: f32, // align vec4<f32> to offset 16
-            tint: [f32; 4],
-            time: f32,
-            _std140_pad1: f32, // align vec2<f32> to offset 40
-            _pad: [f32; 2],
-        }
-
-        let ep = expansion_progress.clamp(0.0, 1.0);
-        let params = OverlayParams {
-            fresnel_power: 1.5,
-            fresnel_intensity: 0.2 + 0.4 * ep,
-            curvature_strength: 1.2 + 0.8 * ep,
-            _std140_pad0: 0.0,
-            tint: [0.08, 0.09, 0.16, 0.0],
-            time,
-            _std140_pad1: 0.0,
-            _pad: [0.0; 2],
-        };
-        let ub = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("OverlayParams"),
-            size: std::mem::size_of::<OverlayParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.queue.write_buffer(&ub, 0, bytemuck::bytes_of(&params));
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("OverlayBG"),
-            layout: &self.overlay_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&output_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: ub.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&disp_view),
-                },
-            ],
-        });
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("LiquidGlass Overlay Encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("LiquidGlass Overlay"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.overlay_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
-        }
-
-        let out_row_bytes = w * 4;
-        let out_aligned_row = out_row_bytes.div_ceil(256) * 256;
-        let buffer_size = out_aligned_row as u64 * h as u64;
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Overlay Readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        let mut copy_enc = self.device.create_command_encoder(&Default::default());
-        copy_enc.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &output_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(out_aligned_row),
-                    rows_per_image: Some(h),
-                },
-            },
-            output_extent,
-        );
-        self.queue.submit(std::iter::once(encoder.finish()));
-        self.queue.submit(std::iter::once(copy_enc.finish()));
-
-        let slice = readback.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .ok()?;
-
-        match rx.recv_timeout(std::time::Duration::from_secs(1)) {
-            Ok(Ok(())) => {}
-            _ => {
-                log::error!("LiquidGlass Overlay: GPU readback failed");
-                return None;
-            }
-        }
-
-        let data = slice.get_mapped_range();
-        let padded_data = data.to_vec();
-        drop(data);
-        readback.unmap();
-
-        let mut result = Vec::with_capacity((out_row_bytes * h) as usize);
-        for row in 0..h {
-            let start = (row * out_aligned_row) as usize;
-            result.extend_from_slice(&padded_data[start..start + out_row_bytes as usize]);
-        }
-
-        let info = ImageInfo::new(
-            ISize::new(w as i32, h as i32),
-            ColorType::RGBA8888,
-            AlphaType::Premul,
-            None,
-        );
-        images::raster_from_data(&info, Data::new_copy(&result), out_row_bytes as usize)
-    }
-
-    #[allow(dead_code)]
-    fn upload_texture_overlay(
-        &self,
-        label: &str,
-        extent: wgpu::Extent3d,
-        pixels: &[u8],
-        tex_w: u32,
-        tex_h: u32,
-    ) -> wgpu::Texture {
-        let row_bytes = tex_w * 4;
-        let aligned_row = row_bytes.div_ceil(256) * 256;
-        let mut padded = vec![0u8; aligned_row as usize * tex_h as usize];
-        for y in 0..tex_h {
-            let src_start = (y * row_bytes) as usize;
-            let dst_start = (y * aligned_row) as usize;
-            if src_start + row_bytes as usize <= pixels.len() {
-                padded[dst_start..dst_start + row_bytes as usize]
-                    .copy_from_slice(&pixels[src_start..src_start + row_bytes as usize]);
-            }
-        }
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &padded,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(aligned_row),
-                rows_per_image: Some(tex_h),
-            },
-            extent,
-        );
-        texture
-    }
-
-    #[allow(clippy::too_many_arguments)]
     fn run_shader(
         &self,
         pixels: &[u8],
         w: u32,
         h: u32,
-        cap_w: u32,
-        cap_h: u32,
-        margin: i32,
         blur_sigma: f32,
         expansion_progress: f32,
         _time: f32,
     ) -> Option<Image> {
-        let input_extent = wgpu::Extent3d {
-            width: cap_w,
-            height: cap_h,
-            depth_or_array_layers: 1,
-        };
-        let output_extent = wgpu::Extent3d {
+        let extent = wgpu::Extent3d {
             width: w,
             height: h,
             depth_or_array_layers: 1,
         };
-        let in_row_bytes = cap_w * 4;
-        let in_aligned_row = in_row_bytes.div_ceil(256) * 256;
-        let out_row_bytes = w * 4;
-        let out_aligned_row = out_row_bytes.div_ceil(256) * 256;
+        let row_bytes = w * 4;
+        let aligned_row = row_bytes.div_ceil(256) * 256;
 
         // Displacement map
-        let disp_pixels = generate_displacement_map(w, h, 0.3, 0.2, 0.6);
+        let disp_pixels = generate_displacement_map(w, h, 0.65, 0.6, 0.55);
         let disp_texture = self.upload_texture(
             "DisplacementMap",
-            output_extent,
+            extent,
             &disp_pixels,
             w,
             h,
-            in_aligned_row,
-            out_row_bytes,
+            aligned_row,
+            row_bytes,
         );
 
         // Desktop capture
-        let input_texture = self.upload_texture(
-            "Input",
-            input_extent,
-            pixels,
-            cap_w,
-            cap_h,
-            in_aligned_row,
-            in_row_bytes,
-        );
+        let input_texture =
+            self.upload_texture("Input", extent, pixels, w, h, aligned_row, row_bytes);
 
         // Ping-pong blur textures
         let tex_a = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BlurTex A"),
-            size: output_extent,
+            size: extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -702,7 +367,7 @@ impl LiquidGlassRenderer {
         });
         let tex_b = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BlurTex B"),
-            size: output_extent,
+            size: extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -778,14 +443,14 @@ impl LiquidGlassRenderer {
             }
             tex_a.create_view(&Default::default())
         } else {
-            // Skip blur entirely �?use raw desktop capture directly
+            // Skip blur entirely — use raw desktop capture directly
             input_texture.create_view(&Default::default())
         };
 
         // Glass pass
         let output_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Output"),
-            size: output_extent,
+            size: extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -799,7 +464,7 @@ impl LiquidGlassRenderer {
 
         let ep = expansion_progress.clamp(0.0, 1.0);
         let params = LiquidParams {
-            max_displacement: (margin as f32 * (0.22 + 0.10 * ep)).max(3.5),
+            max_displacement: 40.0 + 40.0 * ep,
             blur_sigma: 0.01,
             blur_center_falloff: 0.80,
             fresnel_power: 1.5,
@@ -807,14 +472,12 @@ impl LiquidGlassRenderer {
             glass_opacity: 0.0,
             _pad0: [0.0; 2],
             tint: [0.0, 0.0, 0.0, 0.0],
-            curvature_strength: 0.50 + 0.25 * ep,
-            margin_x: margin as f32,
-            margin_y: margin as f32,
-            _pad1: 0.0,
+            curvature_strength: 1.2 + 0.8 * ep,
+            _pad1: [0.0; 3],
         };
         let ub = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GlassParams"),
-            size: std::mem::size_of::<LiquidParams>() as u64,
+            size: 64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -855,7 +518,7 @@ impl LiquidGlassRenderer {
         self.queue.submit(std::iter::once(encoder.finish()));
 
         // Read back
-        let padded_size = (out_aligned_row * h) as u64;
+        let padded_size = (aligned_row * h) as u64;
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Readback"),
             size: padded_size,
@@ -874,11 +537,11 @@ impl LiquidGlassRenderer {
                 buffer: &readback,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(out_aligned_row),
+                    bytes_per_row: Some(aligned_row),
                     rows_per_image: Some(h),
                 },
             },
-            output_extent,
+            extent,
         );
         self.queue.submit(std::iter::once(copy_enc.finish()));
 
@@ -907,10 +570,10 @@ impl LiquidGlassRenderer {
         drop(data);
         readback.unmap();
 
-        let mut result = Vec::with_capacity((out_row_bytes * h) as usize);
+        let mut result = Vec::with_capacity((row_bytes * h) as usize);
         for row in 0..h {
-            let start = (row * out_aligned_row) as usize;
-            result.extend_from_slice(&padded_data[start..start + out_row_bytes as usize]);
+            let start = (row * aligned_row) as usize;
+            result.extend_from_slice(&padded_data[start..start + row_bytes as usize]);
         }
 
         let info = ImageInfo::new(
@@ -969,19 +632,12 @@ impl LiquidGlassRenderer {
 }
 
 // =============================================================================
-// GDI screen capture �?OFFSET to avoid self-capture feedback
+// GDI screen capture 闁?OFFSET to avoid self-capture feedback
 // Same technique as glass.rs: captures from a horizontally shifted position
 // so the island's previous frame is not in the capture region.
 // =============================================================================
 
-#[allow(dead_code)]
-unsafe fn capture_region(
-    hwnd: windows::Win32::Foundation::HWND,
-    sx: i32,
-    sy: i32,
-    w: u32,
-    h: u32,
-) -> Option<Vec<u8>> {
+unsafe fn capture_region(hwnd: windows::Win32::Foundation::HWND, sx: i32, sy: i32, w: u32, h: u32) -> Option<Vec<u8>> {
     unsafe {
         let margin = (w.max(h) / 2) as i32;
         let cap_w = w + margin as u32 * 2;
@@ -1006,7 +662,7 @@ unsafe fn capture_region(
             let idx = (cy * cap_w as usize + cx) * 4;
             let is_black = idx + 2 < px.len() && px[idx] < 5 && px[idx + 1] < 5 && px[idx + 2] < 5;
             if !is_black {
-                // WDA worked �?crop and return
+                // WDA worked — crop and return
                 return crop_center(px, w, h, cap_w, margin);
             }
         }
@@ -1028,7 +684,6 @@ unsafe fn capture_region(
     }
 }
 
-#[allow(dead_code)]
 fn do_capture(sx: i32, sy: i32, margin: i32, cap_w: u32, cap_h: u32) -> Option<Vec<u8>> {
     unsafe {
         let hdc_screen = GetDC(None);
@@ -1095,7 +750,6 @@ fn do_capture(sx: i32, sy: i32, margin: i32, cap_w: u32, cap_h: u32) -> Option<V
     }
 }
 
-#[allow(dead_code)]
 fn crop_center(all_pixels: &[u8], w: u32, h: u32, cap_w: u32, margin: i32) -> Option<Vec<u8>> {
     let mut result = Vec::with_capacity((w * h * 4) as usize);
     let src_row = (cap_w * 4) as usize;
@@ -1130,7 +784,7 @@ pub fn get_liquid_glass_background(
     let cached = LIQUID_CACHE.with(|cell| {
         let cache = cell.borrow();
         if let Some((img, t, cx, cy, cw, ch)) = cache.as_ref()
-            && t.elapsed().as_millis() < 16
+            && t.elapsed().as_millis() < 100
             && *cx == screen_x
             && *cy == screen_y
             && *cw == w

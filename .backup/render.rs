@@ -8,7 +8,6 @@ use crate::ui::expanded::widget_view::draw_widget_page;
 use crate::utils::backdrop::get_mica_background;
 use crate::utils::font::{DrawTextCachedParams, FontManager};
 use crate::utils::glass::get_glass_background;
-use crate::utils::liquid_glass::{LiquidGlassRenderer, get_liquid_glass_background};
 use skia_safe::canvas::SrcRectConstraint;
 use skia_safe::{
     ClipOp, Color, FilterMode, ISize, MipmapMode, Paint, RRect, Rect, SamplingOptions,
@@ -16,11 +15,8 @@ use skia_safe::{
 };
 use softbuffer::Surface;
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
-use windows::Win32::Foundation::HWND;
+use std::sync::Arc;
 use winit::window::Window;
-
-const BACKGROUND_BLUR_SIGMA: f32 = 20.0;
 
 thread_local! {
     static SK_SURFACE: RefCell<Option<SkSurface>> = const { RefCell::new(None) };
@@ -87,11 +83,9 @@ pub struct DrawIslandParams<'a> {
     pub mini_content: Option<MiniContent>,
     pub window: WindowParams,
     pub style: StyleParams<'a>,
-    pub liquid_renderer: Option<&'a Mutex<Option<LiquidGlassRenderer>>>,
 }
 
 pub fn draw_island(
-    hwnd: HWND,
     surface: &mut Surface<Arc<Window>, Arc<Window>>,
     params: DrawIslandParams<'_>,
 ) -> bool {
@@ -102,7 +96,6 @@ pub fn draw_island(
         mini_content,
         window,
         style,
-        liquid_renderer,
     } = params;
 
     let LayoutParams {
@@ -217,82 +210,12 @@ pub fn draw_island(
     let text_color = Color::WHITE;
     let text_color_sec = Color::WHITE;
 
-    if island_style == "liquid" {
-        let screen_x = win_x + offset_x as i32;
-        let screen_y = win_y + offset_y as i32;
-        let elapsed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f32();
-
-        canvas.save();
-        canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-        let liquid_result = liquid_renderer.and_then(|renderer| {
-            get_liquid_glass_background(
-                renderer,
-                hwnd,
-                screen_x,
-                screen_y,
-                current_w as u32,
-                current_h as u32,
-                0.0,
-                expansion_progress,
-                elapsed,
-            )
-        });
-
-        let background = if let Some(bg_img) = liquid_result {
-            Some((bg_img, false))
-        } else {
-            get_glass_background(
-                hwnd,
-                screen_x,
-                screen_y,
-                current_w as u32,
-                current_h as u32,
-                40.0 * global_scale,
-            )
-            .map(|bg_img| (bg_img, true))
-        };
-
-        if let Some((bg_img, should_blur)) = background {
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            if should_blur {
-                paint.set_image_filter(image_filters::blur(
-                    (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                    None,
-                    None,
-                    None,
-                ));
-            }
-            let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
-            canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
-
-            let mut darken = Paint::default();
-            darken.set_color(Color::from_argb(72, 10, 10, 14));
-            darken.set_anti_alias(true);
-            darken.set_blend_mode(skia_safe::BlendMode::Multiply);
-            canvas.draw_rect(rect, &darken);
-        } else {
-            let mut bg_paint = Paint::default();
-            bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
-            bg_paint.set_anti_alias(true);
-            bg_paint.set_image_filter(image_filters::blur(
-                (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                None,
-                None,
-                None,
-            ));
-            canvas.draw_rrect(rrect, &bg_paint);
-        }
-    } else if island_style == "glass" {
+    if island_style == "glass" {
         let screen_x = win_x + offset_x as i32;
         let screen_y = win_y + offset_y as i32;
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);
         if let Some(bg_img) = get_glass_background(
-            hwnd,
             screen_x,
             screen_y,
             current_w as u32,
@@ -301,12 +224,6 @@ pub fn draw_island(
         ) {
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
-            paint.set_image_filter(image_filters::blur(
-                (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                None,
-                None,
-                None,
-            ));
             let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
             canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
 
@@ -319,12 +236,6 @@ pub fn draw_island(
             let mut bg_paint = Paint::default();
             bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
             bg_paint.set_anti_alias(true);
-            bg_paint.set_image_filter(image_filters::blur(
-                (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                None,
-                None,
-                None,
-            ));
             canvas.draw_rrect(rrect, &bg_paint);
         }
     } else if island_style == "mica" {
@@ -344,12 +255,6 @@ pub fn draw_island(
         ) {
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
-            paint.set_image_filter(image_filters::blur(
-                (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                None,
-                None,
-                None,
-            ));
             let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
             canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
 
@@ -361,12 +266,6 @@ pub fn draw_island(
             let mut bg_paint = Paint::default();
             bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
             bg_paint.set_anti_alias(true);
-            bg_paint.set_image_filter(image_filters::blur(
-                (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                None,
-                None,
-                None,
-            ));
             canvas.draw_rrect(rrect, &bg_paint);
         }
     } else if island_style == "dynamic" {
@@ -403,12 +302,6 @@ pub fn draw_island(
 
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
-            paint.set_image_filter(image_filters::blur(
-                (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                None,
-                None,
-                None,
-            ));
             let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
             canvas.draw_image_rect_with_sampling_options(
                 &blurred_cover,
@@ -427,7 +320,6 @@ pub fn draw_island(
             let screen_x = win_x + offset_x as i32;
             let screen_y = win_y + offset_y as i32;
             if let Some(bg_img) = get_glass_background(
-                hwnd,
                 screen_x,
                 screen_y,
                 current_w as u32,
@@ -436,12 +328,6 @@ pub fn draw_island(
             ) {
                 let mut paint = Paint::default();
                 paint.set_anti_alias(true);
-                paint.set_image_filter(image_filters::blur(
-                    (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                    None,
-                    None,
-                    None,
-                ));
                 let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
                 canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
 
@@ -454,12 +340,6 @@ pub fn draw_island(
                 let mut bg_paint = Paint::default();
                 bg_paint.set_color(Color::from_argb(205, 32, 32, 36));
                 bg_paint.set_anti_alias(true);
-                bg_paint.set_image_filter(image_filters::blur(
-                    (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-                    None,
-                    None,
-                    None,
-                ));
                 canvas.draw_rrect(rrect, &bg_paint);
             }
         }
@@ -469,12 +349,6 @@ pub fn draw_island(
         let mut bg_paint = Paint::default();
         bg_paint.set_color(bg_color);
         bg_paint.set_anti_alias(true);
-        bg_paint.set_image_filter(image_filters::blur(
-            (BACKGROUND_BLUR_SIGMA, BACKGROUND_BLUR_SIGMA),
-            None,
-            None,
-            None,
-        ));
         canvas.draw_rrect(rrect, &bg_paint);
     }
 
@@ -824,15 +698,9 @@ pub fn draw_island(
                 ));
                 let text_x = offset_x + 20.0 * global_scale;
                 let text_w = current_w - 40.0 * global_scale;
-                let notification_mini = ctx.id.source == "notification";
-                let mini_h = if notification_mini { current_h } else { base_h };
-                let text_y = if notification_mini && !ctx.body.is_empty() {
-                    stable_offset_y + mini_h / 2.0 - font_sz * 0.55
-                } else {
-                    stable_offset_y + mini_h / 2.0 - font_sz * 0.3
-                };
+                let text_y = stable_offset_y + base_h / 2.0 - font_sz * 0.3;
                 canvas.save();
-                let clip = Rect::from_xywh(text_x, stable_offset_y, text_w, mini_h);
+                let clip = Rect::from_xywh(text_x, stable_offset_y, text_w, base_h);
                 canvas.clip_rect(clip, ClipOp::Intersect, true);
                 draw_text_cached(DrawTextCachedParams {
                     canvas,
@@ -853,12 +721,7 @@ pub fn draw_island(
                         text_color.g(),
                         text_color.b(),
                     ));
-                    let sec_y = text_y
-                        + if notification_mini {
-                            font_sz * 1.15
-                        } else {
-                            font_sz * 1.3
-                        };
+                    let sec_y = text_y + font_sz * 1.3;
                     draw_text_cached(DrawTextCachedParams {
                         canvas,
                         text: &ctx.body,

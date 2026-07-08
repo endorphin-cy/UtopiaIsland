@@ -1,13 +1,18 @@
 #![allow(dead_code)]
 
 use std::collections::HashSet;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use windows::Foundation::TypedEventHandler;
 use windows::UI::Notifications::Management::{
     UserNotificationListener, UserNotificationListenerAccessStatus,
 };
-use windows::UI::Notifications::{KnownNotificationBindings, NotificationKinds, UserNotification};
+use windows::UI::Notifications::{
+    KnownNotificationBindings, NotificationKinds, UserNotification,
+    UserNotificationChangedEventArgs, UserNotificationChangedKind,
+};
 
 #[derive(Debug, Clone)]
 pub struct SystemNotification {
@@ -51,7 +56,31 @@ impl NotificationBridge {
                 return;
             }
 
-            let mut seen = HashSet::new();
+            let seen = Arc::new(Mutex::new(HashSet::new()));
+            let event_listener = listener.clone();
+            let event_seen = Arc::clone(&seen);
+            let event_tx = tx.clone();
+            let handler = TypedEventHandler::<
+                UserNotificationListener,
+                UserNotificationChangedEventArgs,
+            >::new(move |_listener, args| {
+                let Some(args) = &*args else {
+                    return Ok(());
+                };
+                if args.ChangeKind()? == UserNotificationChangedKind::Added {
+                    let id = args.UserNotificationId()?;
+                    handle_notification(&event_listener, &event_seen, &event_tx, id);
+                }
+                Ok(())
+            });
+            let _event_token = match listener.NotificationChanged(&handler) {
+                Ok(token) => Some(token),
+                Err(e) => {
+                    log::warn!("NotificationChanged registration failed: {:?}", e);
+                    None
+                }
+            };
+
             loop {
                 if let Ok(notifications) = listener
                     .GetNotificationsAsync(NotificationKinds::Toast)
@@ -61,19 +90,12 @@ impl NotificationBridge {
                     for index in 0..size {
                         if let Ok(notification) = notifications.GetAt(index) {
                             let id = notification.Id().unwrap_or_default();
-                            if !seen.insert(id) {
-                                continue;
-                            }
-
-                            if let Some(item) = parse_notification(&notification) {
-                                let _ = tx.send(item);
-                                let _ = listener.RemoveNotification(id);
-                            }
+                            handle_notification(&listener, &seen, &tx, id);
                         }
                     }
                 }
 
-                std::thread::sleep(Duration::from_millis(400));
+                std::thread::sleep(Duration::from_millis(1000));
             }
         });
 
@@ -87,6 +109,25 @@ impl NotificationBridge {
         }
         result
     }
+}
+
+fn handle_notification(
+    listener: &UserNotificationListener,
+    seen: &Arc<Mutex<HashSet<u32>>>,
+    tx: &Sender<SystemNotification>,
+    id: u32,
+) {
+    let should_process = seen.lock().map(|mut seen| seen.insert(id)).unwrap_or(false);
+    if !should_process {
+        return;
+    }
+
+    if let Ok(notification) = listener.GetNotification(id)
+        && let Some(item) = parse_notification(&notification)
+    {
+        let _ = tx.send(item);
+    }
+    let _ = listener.RemoveNotification(id);
 }
 
 fn parse_notification(notification: &UserNotification) -> Option<SystemNotification> {
