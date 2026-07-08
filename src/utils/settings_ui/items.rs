@@ -65,6 +65,13 @@ pub enum SettingsItem {
         btn_label: String,
         enabled: bool,
     },
+    RowTextInput {
+        id: String,
+        label: String,
+        value: String,
+        active: bool,
+        enabled: bool,
+    },
     RowAppItem {
         label: String,
         active: bool,
@@ -120,6 +127,7 @@ impl SettingsItem {
                 | SettingsItem::RowFolderPicker { .. }
                 | SettingsItem::RowSourceSelect { .. }
                 | SettingsItem::RowButton { .. }
+                | SettingsItem::RowTextInput { .. }
                 | SettingsItem::RowAppItem { .. }
                 | SettingsItem::RowLabel { .. }
         )

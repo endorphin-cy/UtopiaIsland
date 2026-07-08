@@ -98,6 +98,7 @@ pub async fn fetch_lyrics(
     //    NetEase hit). Only try the selected source once, skip fallback.
     if artist.trim().is_empty() {
         return match source {
+            "qq" => fetch_lyrics_qq(title, "").await,
             "lrclib" => fetch_lyrics_lrclib(title, "", duration_secs).await,
             _ => fetch_lyrics_163(title, "").await,
         };
@@ -105,17 +106,138 @@ pub async fn fetch_lyrics(
 
     // 3. Online sources
     let result = match source {
+        "qq" => fetch_lyrics_qq(title, artist).await,
         "lrclib" => fetch_lyrics_lrclib(title, artist, duration_secs).await,
         _ => fetch_lyrics_163(title, artist).await,
     };
     if result.is_none() && fallback {
         match source {
             "lrclib" => fetch_lyrics_163(title, artist).await,
+            "qq" => {
+                if let Some(lyrics) = fetch_lyrics_163(title, artist).await {
+                    Some(lyrics)
+                } else {
+                    fetch_lyrics_lrclib(title, artist, duration_secs).await
+                }
+            }
             _ => fetch_lyrics_lrclib(title, artist, duration_secs).await,
         }
     } else {
         result
     }
+}
+
+async fn fetch_lyrics_qq(title: &str, artist: &str) -> Option<Arc<Vec<LyricLine>>> {
+    let songmid = search_qq_songmid(title, artist).await?;
+    let url = format!(
+        "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={}&format=json&nobase64=1",
+        url_encode(&songmid)
+    );
+
+    let res = HTTP_CLIENT
+        .get(&url)
+        .header("Referer", "https://y.qq.com/portal/player.html")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+        )
+        .send()
+        .await
+        .ok()?;
+
+    let json: Value = res.json().await.ok()?;
+    let code = json
+        .get("retcode")
+        .or_else(|| json.get("code"))
+        .and_then(|value| value.as_i64())
+        .unwrap_or(-1);
+    if code != 0 {
+        return None;
+    }
+
+    let lrc = html_unescape(json.get("lyric")?.as_str().unwrap_or(""));
+    let trans = html_unescape(
+        json.get("trans")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+    );
+    let lines = parse_lyrics(&lrc, &trans);
+    if lines.is_empty() {
+        None
+    } else {
+        Some(Arc::new(lines))
+    }
+}
+
+async fn search_qq_songmid(title: &str, artist: &str) -> Option<String> {
+    let query = if artist.trim().is_empty() {
+        title.to_string()
+    } else {
+        format!("{title} {artist}")
+    };
+    let url = format!(
+        "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?key={}&format=json&inCharset=utf8&outCharset=utf-8",
+        url_encode(&query)
+    );
+
+    let res = HTTP_CLIENT
+        .get(&url)
+        .header("Referer", "https://y.qq.com/")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+        )
+        .send()
+        .await
+        .ok()?;
+
+    let json: Value = res.json().await.ok()?;
+    let songs = json.get("data")?.get("song")?.get("itemlist")?.as_array()?;
+    let artist_lower = artist.to_lowercase();
+
+    for song in songs {
+        let name = song
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let singer = song
+            .get("singer")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if !query_matches_song(title, name) {
+            continue;
+        }
+        if !artist_lower.is_empty() {
+            let singer_lower = singer.to_lowercase();
+            if !singer_lower.contains(&artist_lower) && !artist_lower.contains(&singer_lower) {
+                continue;
+            }
+        }
+        if let Some(mid) = song
+            .get("mid")
+            .or_else(|| song.get("songmid"))
+            .and_then(|value| value.as_str())
+            .filter(|mid| !mid.is_empty())
+        {
+            return Some(mid.to_string());
+        }
+    }
+
+    songs.first().and_then(|song| {
+        let name = song
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if query_matches_song(title, name) {
+            song.get("mid")
+                .or_else(|| song.get("songmid"))
+                .and_then(|value| value.as_str())
+                .filter(|mid| !mid.is_empty())
+                .map(ToString::to_string)
+        } else {
+            None
+        }
+    })
 }
 
 async fn fetch_lyrics_163(title: &str, artist: &str) -> Option<Arc<Vec<LyricLine>>> {
@@ -383,6 +505,46 @@ fn parse_time(time_str: &str) -> Option<u64> {
     }
 
     Some(mins * 60000 + secs * 1000 + ms)
+}
+
+fn html_unescape(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(pos) = rest.find('&') {
+        output.push_str(&rest[..pos]);
+        rest = &rest[pos..];
+        if let Some(end) = rest.find(';') {
+            let entity = &rest[1..end];
+            let decoded = match entity {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+                    u32::from_str_radix(&entity[2..], 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                }
+                _ if entity.starts_with('#') => {
+                    entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+                }
+                _ => None,
+            };
+            if let Some(ch) = decoded {
+                output.push(ch);
+                rest = &rest[end + 1..];
+            } else {
+                output.push('&');
+                rest = &rest[1..];
+            }
+        } else {
+            output.push_str(rest);
+            rest = "";
+        }
+    }
+    output.push_str(rest);
+    output
 }
 
 fn url_encode(input: &str) -> String {

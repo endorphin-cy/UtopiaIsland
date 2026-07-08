@@ -3,6 +3,7 @@ use crate::core::config::{AppConfig, PADDING, TOP_OFFSET, WINDOW_TITLE};
 use crate::core::context::{ContextId, ContextManager, PluginContext, Priority};
 use crate::core::notifications::NotificationBridge;
 use crate::core::persistence::load_config;
+use crate::core::reminders::ReminderScheduler;
 use crate::core::render::draw_island;
 use crate::core::smtc::SmtcListener;
 use crate::plugin::PluginManager;
@@ -102,6 +103,7 @@ pub struct App {
     pending_install: Option<mpsc::Receiver<InstallResult>>,
     liquid_renderer: Mutex<Option<LiquidGlassRenderer>>,
     notifications: NotificationBridge,
+    reminders: ReminderScheduler,
 }
 
 impl Default for App {
@@ -167,6 +169,7 @@ impl Default for App {
             pending_install: None,
             liquid_renderer: Mutex::new(LiquidGlassRenderer::new()),
             notifications: NotificationBridge::new(),
+            reminders: ReminderScheduler::new(),
         }
     }
 }
@@ -291,6 +294,22 @@ impl App {
         self.ctx_mgr
             .current_plugin_mini()
             .is_some_and(|ctx| ctx.id.source == "notification")
+    }
+
+    fn reminder_mini_active(&self) -> bool {
+        self.ctx_mgr
+            .current_plugin_mini()
+            .is_some_and(|ctx| ctx.id.source == "reminder")
+    }
+
+    fn poll_reminders(&mut self, window: &Window) {
+        if let Some(ctx) = self.reminders.due_context(&self.config.reminders) {
+            self.ctx_mgr.push_context(ctx);
+            self.auto_hidden = false;
+            self.manually_hidden = false;
+            self.spring_hide.velocity = -0.65;
+            window.request_redraw();
+        }
     }
 
     fn get_target_monitor(
@@ -501,6 +520,27 @@ impl App {
         let island_y = layout.island_y;
         let offset_x = layout.offset_x;
         let current_island_y = layout.current_island_y;
+        if let Some(ctx) = self.ctx_mgr.current_plugin_mini()
+            && ctx.id.source == "reminder"
+        {
+            let scale = self.config.global_scale as f64;
+            let button_w = 52.0 * scale;
+            let button_h = 18.0 * scale;
+            let button_x = offset_x + self.spring_w.value as f64 - button_w - 10.0 * scale;
+            let button_y = current_island_y + (self.spring_h.value as f64 - button_h) / 2.0;
+            if is_point_in_rect(
+                rel_x as f64,
+                rel_y as f64,
+                button_x,
+                button_y,
+                button_w,
+                button_h,
+            ) {
+                self.ctx_mgr.close_context(&ctx.id);
+                self.expanded = false;
+                return;
+            }
+        }
 
         let is_hovering_visible = is_point_in_rect(
             rel_x as f64,
@@ -824,8 +864,11 @@ impl App {
     ) -> f32 {
         let is_currently_hidden =
             self.auto_hidden || self.manually_hidden || self.spring_hide.value > 0.1;
-        let notification_mini_active = self.notification_mini_active();
-        let target_base_w = if notification_mini_active && !self.expanded && !is_currently_hidden {
+        let important_mini_active = (self.notification_mini_active()
+            || self.reminder_mini_active())
+            && !self.expanded
+            && !is_currently_hidden;
+        let target_base_w = if important_mini_active {
             self.config.base_width * 2.0
         } else if music_active && !self.expanded && !is_currently_hidden {
             let has_visible_lyrics = self.config.show_lyrics
@@ -913,6 +956,7 @@ impl ApplicationHandler for App {
             let attrs = Window::default_attributes()
                 .with_title(WINDOW_TITLE)
                 .with_inner_size(PhysicalSize::new(self.os_w, self.os_h))
+                .with_fullscreen(None)
                 .with_transparent(true)
                 .with_visible(false)
                 .with_decorations(false)
@@ -1303,6 +1347,7 @@ impl ApplicationHandler for App {
         self.handle_tray_events(&window, event_loop);
         self.reload_config_if_changed(&window);
         self.drain_system_notifications(&window);
+        self.poll_reminders(&window);
 
         if let Some(rx) = self.pending_install.take() {
             match rx.try_recv() {
@@ -1420,12 +1465,18 @@ impl ApplicationHandler for App {
         }
 
         let is_paused_idle = music_active && !media.is_playing;
+        let reminder_active = self.reminder_mini_active();
         let is_idle = !is_hovering_visible
             && !self.expanded
             && !self.is_dragging
+            && !reminder_active
             && (!music_active || is_paused_idle);
         if !self.config.auto_hide {
             self.auto_hidden = false;
+            self.idle_timer = Instant::now();
+        } else if reminder_active {
+            self.auto_hidden = false;
+            self.manually_hidden = false;
             self.idle_timer = Instant::now();
         } else if media.is_playing && self.auto_hidden && !self.manually_hidden {
             self.auto_hidden = false;
@@ -1611,11 +1662,11 @@ impl ApplicationHandler for App {
             window.request_redraw();
         }
 
-        let notification_mini_active = self.notification_mini_active();
+        let important_mini_active = self.notification_mini_active() || self.reminder_mini_active();
         let target_w = self.compute_lyric_target_width(&window, music_active, is_paused, dt);
         let target_h = (if self.expanded {
             self.config.expanded_height
-        } else if notification_mini_active {
+        } else if important_mini_active {
             self.config.base_height * 2.0
         } else {
             self.config.base_height
@@ -1644,16 +1695,7 @@ impl ApplicationHandler for App {
             self.last_glass_refresh = Instant::now();
         }
 
-        if self.expanded
-            || (music_active && media.is_playing)
-            || self.spring_w.velocity.abs() > 0.001
-            || self.spring_h.velocity.abs() > 0.001
-            || self.spring_r.velocity.abs() > 0.001
-            || self.spring_view.velocity.abs() > 0.001
-            || should_periodic_redraw
-        {
-            window.request_redraw();
-        }
+        window.request_redraw();
         let elapsed = frame_start.elapsed();
         let target_frame_time = Duration::from_micros(6944);
         if elapsed < target_frame_time {

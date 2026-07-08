@@ -16,7 +16,7 @@ use windows::Win32::System::Threading::{MUTEX_ALL_ACCESS, OpenMutexW};
 use windows::core::w;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -31,6 +31,7 @@ const SIDEBAR_ROW_H: f32 = 32.0;
 const CONTENT_START_Y: f32 = 10.0;
 const SUB_TAB_H: f32 = 40.0;
 const SUB_TAB_START_Y: f32 = 50.0;
+const SETTINGS_PAGE_COUNT: usize = 4;
 
 const POPUP_OPACITY_KEY: u64 = 1;
 const SIDEBAR_KEY_BASE: u64 = 1_000;
@@ -182,6 +183,7 @@ pub struct SettingsApp {
     win_h: f32,
     focused: bool,
     dots_hovered: bool,
+    focused_text_id: Option<String>,
 }
 
 impl SettingsApp {
@@ -230,6 +232,7 @@ impl SettingsApp {
             win_h: WIN_H,
             focused: true,
             dots_hovered: false,
+            focused_text_id: None,
         }
     }
 
@@ -526,6 +529,7 @@ impl SettingsApp {
                 options: vec![
                     ("163".to_string(), source == "163"),
                     ("LRCLIB".to_string(), source == "lrclib"),
+                    ("QQ".to_string(), source == "qq"),
                 ],
                 enabled: show_lyrics,
             },
@@ -629,11 +633,88 @@ impl SettingsApp {
         ]
     }
 
+    fn build_reminder_items(&self) -> Vec<SettingsItem> {
+        let mut items = vec![
+            SettingsItem::PageTitle {
+                text: "提醒".to_string(),
+            },
+            SettingsItem::SectionHeader {
+                label: "日程提醒".to_string(),
+            },
+        ];
+
+        for (idx, reminder) in self.config.reminders.iter().enumerate() {
+            let number = idx + 1;
+            let title_id = format!("reminder:{idx}:title");
+            let body_id = format!("reminder:{idx}:body");
+            let time_id = format!("reminder:{idx}:time");
+            let date_id = format!("reminder:{idx}:date");
+
+            items.push(SettingsItem::GroupStart);
+            items.push(SettingsItem::RowSwitch {
+                label: format!("提醒 {number} 启用"),
+                on: reminder.enabled,
+                enabled: true,
+            });
+            items.push(SettingsItem::RowTextInput {
+                id: title_id.clone(),
+                label: format!("提醒 {number} 标题"),
+                value: reminder.title.clone(),
+                active: self.focused_text_id.as_deref() == Some(title_id.as_str()),
+                enabled: true,
+            });
+            items.push(SettingsItem::RowTextInput {
+                id: body_id.clone(),
+                label: format!("提醒 {number} 内容"),
+                value: reminder.body.clone(),
+                active: self.focused_text_id.as_deref() == Some(body_id.as_str()),
+                enabled: true,
+            });
+            items.push(SettingsItem::RowTextInput {
+                id: time_id.clone(),
+                label: "时间 HH:MM".to_string(),
+                value: reminder.time.clone(),
+                active: self.focused_text_id.as_deref() == Some(time_id.as_str()),
+                enabled: true,
+            });
+            items.push(SettingsItem::RowSwitch {
+                label: format!("提醒 {number} 每日重复"),
+                on: reminder.daily,
+                enabled: true,
+            });
+            if !reminder.daily {
+                items.push(SettingsItem::RowTextInput {
+                    id: date_id.clone(),
+                    label: "日期 YYYY-MM-DD".to_string(),
+                    value: reminder.date.clone().unwrap_or_default(),
+                    active: self.focused_text_id.as_deref() == Some(date_id.as_str()),
+                    enabled: true,
+                });
+            }
+            items.push(SettingsItem::RowButton {
+                label: format!("删除提醒 {number}"),
+                btn_label: "删除".to_string(),
+                enabled: true,
+            });
+            items.push(SettingsItem::GroupEnd);
+        }
+
+        items.push(SettingsItem::GroupStart);
+        items.push(SettingsItem::RowButton {
+            label: "添加提醒".to_string(),
+            btn_label: "添加".to_string(),
+            enabled: true,
+        });
+        items.push(SettingsItem::GroupEnd);
+        items
+    }
+
     fn build_current_items(&self) -> Vec<SettingsItem> {
         match self.active_page {
             0 => self.build_general_items(),
             1 => self.build_music_items(),
             2 => self.build_about_items(),
+            3 => self.build_reminder_items(),
             _ => vec![],
         }
     }
@@ -1001,7 +1082,12 @@ impl SettingsApp {
         sep.set_style(skia_safe::paint::Style::Stroke);
         canvas.draw_line((SIDEBAR_W, 0.0), (SIDEBAR_W, self.win_h), &sep);
 
-        let pages = [tr("tab_general"), tr("tab_music"), tr("tab_about")];
+        let pages = [
+            tr("tab_general"),
+            tr("tab_music"),
+            tr("tab_about"),
+            "提醒".to_string(),
+        ];
         let start_y = 60.0;
 
         for (i, label) in pages.iter().enumerate() {
@@ -1084,6 +1170,27 @@ impl SettingsApp {
                         (row_x + 18.0, row_y + 15.0),
                         (row_x + 18.0, row_y + 18.5),
                         &info_paint,
+                    );
+                }
+                3 => {
+                    icon_bg_paint.set_color(Color::from_rgb(255, 149, 0));
+                    canvas.draw_round_rect(icon_bg_rect, 5.0, 5.0, &icon_bg_paint);
+
+                    let mut clock_paint = Paint::default();
+                    clock_paint.set_anti_alias(true);
+                    clock_paint.set_color(Color::WHITE);
+                    clock_paint.set_stroke_width(1.2);
+                    clock_paint.set_style(skia_safe::paint::Style::Stroke);
+                    canvas.draw_circle((row_x + 18.0, row_y + 16.0), 6.5, &clock_paint);
+                    canvas.draw_line(
+                        (row_x + 18.0, row_y + 16.0),
+                        (row_x + 18.0, row_y + 12.0),
+                        &clock_paint,
+                    );
+                    canvas.draw_line(
+                        (row_x + 18.0, row_y + 16.0),
+                        (row_x + 21.0, row_y + 18.0),
+                        &clock_paint,
                     );
                 }
                 _ => {}
@@ -1324,6 +1431,15 @@ impl SettingsApp {
                 _ => SwitchAnimator::new(&[]),
             },
             1 => SwitchAnimator::new_with_anims(&self.switch_anim, &[6, 7, 8, 9]),
+            3 => {
+                let states: Vec<bool> = self
+                    .config
+                    .reminders
+                    .iter()
+                    .flat_map(|reminder| [reminder.enabled, reminder.daily])
+                    .collect();
+                SwitchAnimator::new(&states)
+            }
             _ => SwitchAnimator::new(&[]),
         }
     }
@@ -1402,6 +1518,9 @@ impl ApplicationHandler for SettingsApp {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                if self.handle_text_key(&event.logical_key) {
+                    return;
+                }
                 match event.logical_key {
                     Key::Named(NamedKey::F11) => {}
                     Key::Named(NamedKey::ArrowLeft) => {
@@ -1439,7 +1558,7 @@ impl ApplicationHandler for SettingsApp {
                                     win.request_redraw();
                                 }
                             }
-                        } else if self.active_page < 2 {
+                        } else if self.active_page + 1 < SETTINGS_PAGE_COUNT {
                             self.active_page += 1;
                             self.scroll_y = 0.0;
                             self.target_scroll_y = 0.0;
@@ -1452,6 +1571,9 @@ impl ApplicationHandler for SettingsApp {
                     }
                     _ => {}
                 }
+            }
+            WindowEvent::Ime(Ime::Commit(text)) => {
+                self.handle_text_commit(&text);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = self
@@ -1490,19 +1612,19 @@ impl ApplicationHandler for SettingsApp {
                     let mut new_hover: i32 = -1;
                     if mx < SIDEBAR_W {
                         let start_y = 60.0;
-                        for i in 0..3 {
+                        for i in 0..SETTINGS_PAGE_COUNT {
                             let row_y = start_y + i as f32 * (SIDEBAR_ROW_H + 2.0);
                             if my >= row_y
                                 && my <= row_y + SIDEBAR_ROW_H
                                 && (SIDEBAR_PAD..=SIDEBAR_W - SIDEBAR_PAD).contains(&mx)
                             {
-                                new_hover = i;
+                                new_hover = i as i32;
                             }
                         }
                     }
                     if new_hover != self.sidebar_hover {
                         self.sidebar_hover = new_hover;
-                        for idx in 0..3 {
+                        for idx in 0..SETTINGS_PAGE_COUNT {
                             if idx == new_hover as usize {
                                 self.anim.set(SIDEBAR_KEY_BASE + idx as u64, 1.0);
                             } else {

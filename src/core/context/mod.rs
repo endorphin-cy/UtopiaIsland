@@ -89,8 +89,12 @@ impl ContextManager {
     pub fn current_plugin_mini(&self) -> Option<PluginContext> {
         self.plugin_contexts
             .iter()
-            .rev()
-            .find(|c| c.mini_render)
+            .filter(|c| c.mini_render)
+            .max_by(|a, b| {
+                a.priority
+                    .cmp(&b.priority)
+                    .then_with(|| a.created_at.cmp(&b.created_at))
+            })
             .cloned()
     }
 
@@ -119,7 +123,7 @@ impl ContextManager {
 
         let mut to_remove = Vec::new();
         for ctx in &self.plugin_contexts {
-            if ctx.priority >= Priority::High
+            if ctx.priority == Priority::High
                 && ctx.mini_render
                 && now.duration_since(ctx.created_at)
                     > Duration::from_secs((ctx.duration_sec as u64).max(1))

@@ -5,5 +5,6 @@ pub mod i18n;
 pub mod lyrics;
 pub mod notifications;
 pub mod persistence;
+pub mod reminders;
 pub mod render;
 pub mod smtc;

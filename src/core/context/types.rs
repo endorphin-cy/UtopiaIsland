@@ -18,6 +18,7 @@ pub enum Priority {
     Medium = 1,
     /// 需要即时注意的通知
     High = 2,
+    Critical = 3,
 }
 
 impl Priority {
@@ -26,6 +27,7 @@ impl Priority {
             0 => Some(Self::Low),
             1 => Some(Self::Medium),
             2 => Some(Self::High),
+            3 => Some(Self::Critical),
             _ => None,
         }
     }

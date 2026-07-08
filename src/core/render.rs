@@ -823,10 +823,17 @@ pub fn draw_island(
                     text_color.b(),
                 ));
                 let text_x = offset_x + 20.0 * global_scale;
-                let text_w = current_w - 40.0 * global_scale;
+                let reminder_mini = ctx.id.source == "reminder";
+                let text_w = current_w
+                    - if reminder_mini {
+                        110.0 * global_scale
+                    } else {
+                        40.0 * global_scale
+                    };
                 let notification_mini = ctx.id.source == "notification";
-                let mini_h = if notification_mini { current_h } else { base_h };
-                let text_y = if notification_mini && !ctx.body.is_empty() {
+                let important_mini = notification_mini || reminder_mini;
+                let mini_h = if important_mini { current_h } else { base_h };
+                let text_y = if important_mini && !ctx.body.is_empty() {
                     stable_offset_y + mini_h / 2.0 - font_sz * 0.55
                 } else {
                     stable_offset_y + mini_h / 2.0 - font_sz * 0.3
@@ -854,7 +861,7 @@ pub fn draw_island(
                         text_color.b(),
                     ));
                     let sec_y = text_y
-                        + if notification_mini {
+                        + if important_mini {
                             font_sz * 1.15
                         } else {
                             font_sz * 1.3
@@ -870,6 +877,49 @@ pub fn draw_island(
                     });
                 }
                 canvas.restore();
+
+                if reminder_mini {
+                    let button_w = 52.0 * global_scale;
+                    let button_h = 18.0 * global_scale;
+                    let button_x = offset_x + current_w - button_w - 10.0 * global_scale;
+                    let button_y = stable_offset_y + (mini_h - button_h) / 2.0;
+                    let mut button_paint = Paint::default();
+                    button_paint.set_anti_alias(true);
+                    button_paint.set_color(Color::from_argb(
+                        (alpha as f32 * 0.88) as u8,
+                        255,
+                        255,
+                        255,
+                    ));
+                    canvas.draw_rrect(
+                        RRect::new_rect_xy(
+                            Rect::from_xywh(button_x, button_y, button_w, button_h),
+                            button_h / 2.0,
+                            button_h / 2.0,
+                        ),
+                        &button_paint,
+                    );
+
+                    let mut button_text_paint = Paint::default();
+                    button_text_paint.set_anti_alias(true);
+                    button_text_paint.set_color(Color::from_argb(alpha, 20, 20, 24));
+                    let button_text = "确定";
+                    let button_font_sz = font_sz * 0.78;
+                    let button_text_w = FontManager::global().measure_text_cached(
+                        button_text,
+                        button_font_sz,
+                        skia_safe::FontStyle::bold(),
+                    );
+                    draw_text_cached(DrawTextCachedParams {
+                        canvas,
+                        text: button_text,
+                        x: button_x + (button_w - button_text_w) / 2.0,
+                        y: button_y + button_h / 2.0 + button_font_sz * 0.35,
+                        size: button_font_sz,
+                        bold: true,
+                        paint: &button_text_paint,
+                    });
+                }
             }
             None => {}
         }

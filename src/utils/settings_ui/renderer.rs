@@ -849,6 +849,101 @@ pub fn draw_items(params: DrawItemsParams<'_>) {
                 }
                 row_idx += 1;
             }
+            SettingsItem::RowTextInput {
+                label,
+                value,
+                active,
+                enabled,
+                ..
+            } => {
+                let visible = y + ROW_HEIGHT >= visible_min_y && y <= visible_max_y;
+                if visible {
+                    draw_row_hover(
+                        canvas,
+                        y,
+                        ROW_HEIGHT,
+                        content_w,
+                        row_idx,
+                        in_group,
+                        hover_anims,
+                        theme,
+                    );
+                }
+                let row_x = CONTENT_PADDING + GROUP_INNER_PAD;
+                let cy = y + ROW_HEIGHT / 2.0;
+
+                if visible {
+                    paint.set_color(if *enabled {
+                        theme.text_pri
+                    } else {
+                        theme.text_sec
+                    });
+                    fm.draw_text_cached(DrawTextCachedParams {
+                        canvas,
+                        text: label,
+                        x: row_x,
+                        y: cy + 5.0,
+                        size: 13.0,
+                        bold: false,
+                        paint: &paint,
+                    });
+
+                    let input_w = 170.0;
+                    let input_x = CONTENT_PADDING + content_w - GROUP_INNER_PAD - input_w;
+                    let input_y = cy - POPUP_BTN_H / 2.0;
+                    paint.set_color(if *active {
+                        theme.card_highlight
+                    } else {
+                        theme.group_bg
+                    });
+                    canvas.draw_round_rect(
+                        Rect::from_xywh(input_x, input_y, input_w, POPUP_BTN_H),
+                        POPUP_BTN_R,
+                        POPUP_BTN_R,
+                        &paint,
+                    );
+                    paint.set_color(if *enabled {
+                        theme.text_pri
+                    } else {
+                        theme.text_sec
+                    });
+                    let display_value = if *active {
+                        format!("{value}|")
+                    } else {
+                        value.clone()
+                    };
+                    fm.draw_text_in_rect(DrawTextInRectParams {
+                        canvas,
+                        text: &display_value,
+                        x: input_x + 8.0,
+                        y: input_y + 17.0,
+                        w: input_w - 16.0,
+                        size: 12.0,
+                        bold: false,
+                        paint: &paint,
+                    });
+                }
+
+                if in_group {
+                    group_current_row += 1;
+                    if group_current_row < group_row_count && visible {
+                        let mut sep = Paint::default();
+                        sep.set_anti_alias(true);
+                        sep.set_color(theme.separator);
+                        sep.set_stroke_width(0.5);
+                        sep.set_style(skia_safe::paint::Style::Stroke);
+                        canvas.draw_line(
+                            (row_x, y + ROW_HEIGHT),
+                            (
+                                CONTENT_PADDING + content_w - GROUP_INNER_PAD,
+                                y + ROW_HEIGHT,
+                            ),
+                            &sep,
+                        );
+                    }
+                }
+                row_idx += 1;
+            }
             SettingsItem::RowAppItem {
                 label,
                 active,

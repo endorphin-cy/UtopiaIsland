@@ -1,9 +1,9 @@
 use super::{
-    CONTENT_START_Y, POPUP_OPACITY_KEY, SIDEBAR_PAD, SIDEBAR_ROW_H, SIDEBAR_W, SUB_TAB_H,
-    SUB_TAB_START_Y,
+    CONTENT_START_Y, POPUP_OPACITY_KEY, SETTINGS_PAGE_COUNT, SIDEBAR_PAD, SIDEBAR_ROW_H, SIDEBAR_W,
+    SUB_TAB_H, SUB_TAB_START_Y,
 };
 use super::{PopupKind, PopupState, SettingsApp};
-use crate::core::config::{APP_HOMEPAGE, AppConfig, DockPosition};
+use crate::core::config::{APP_HOMEPAGE, AppConfig, DockPosition, ReminderTaskConfig};
 use crate::core::i18n::{available_langs, current_lang, init_i18n, set_lang, tr};
 use crate::core::persistence::save_config;
 use crate::utils::autostart::set_autostart;
@@ -11,8 +11,108 @@ use crate::utils::font::FontManager;
 use crate::utils::settings_ui::items::*;
 use crate::utils::settings_ui::*;
 use skia_safe::Rect;
+use winit::keyboard::{Key, NamedKey};
+
+fn parse_reminder_switch_index(label: &str, suffix: &str) -> Option<usize> {
+    let middle = label.strip_prefix("提醒 ")?.strip_suffix(suffix)?;
+    middle.parse::<usize>().ok()?.checked_sub(1)
+}
+
+fn parse_delete_reminder_index(label: &str) -> Option<usize> {
+    let middle = label.strip_prefix("删除提醒 ")?;
+    middle.parse::<usize>().ok()?.checked_sub(1)
+}
 
 impl SettingsApp {
+    pub(super) fn handle_text_key(&mut self, key: &Key) -> bool {
+        let Some(id) = self.focused_text_id.clone() else {
+            return false;
+        };
+
+        let mut changed = false;
+        match key {
+            Key::Named(NamedKey::Enter)
+            | Key::Named(NamedKey::Escape)
+            | Key::Named(NamedKey::Tab) => {
+                self.focused_text_id = None;
+                self.mark_items_dirty();
+                if let Some(win) = &self.window {
+                    win.set_ime_allowed(false);
+                }
+            }
+            Key::Named(NamedKey::Backspace) => {
+                changed = self.edit_reminder_text(&id, |value| {
+                    value.pop();
+                });
+            }
+            _ => {}
+        }
+
+        if changed {
+            self.mark_items_dirty();
+            save_config(&self.config);
+        }
+        if let Some(win) = &self.window {
+            win.request_redraw();
+        }
+        true
+    }
+
+    pub(super) fn handle_text_commit(&mut self, text: &str) -> bool {
+        let Some(id) = self.focused_text_id.clone() else {
+            return false;
+        };
+        if text.is_empty() {
+            return true;
+        }
+        let changed = self.edit_reminder_text(&id, |value| {
+            for ch in text.chars().filter(|ch| !ch.is_control()) {
+                if value.chars().count() < 120 {
+                    value.push(ch);
+                }
+            }
+        });
+        if changed {
+            self.mark_items_dirty();
+            save_config(&self.config);
+        }
+        if let Some(win) = &self.window {
+            win.request_redraw();
+        }
+        true
+    }
+
+    fn edit_reminder_text<F>(&mut self, id: &str, edit: F) -> bool
+    where
+        F: FnOnce(&mut String),
+    {
+        let mut parts = id.split(':');
+        if parts.next() != Some("reminder") {
+            return false;
+        }
+        let Some(index) = parts.next().and_then(|part| part.parse::<usize>().ok()) else {
+            return false;
+        };
+        let Some(field) = parts.next() else {
+            return false;
+        };
+        let Some(reminder) = self.config.reminders.get_mut(index) else {
+            return false;
+        };
+
+        match field {
+            "title" => edit(&mut reminder.title),
+            "body" => edit(&mut reminder.body),
+            "time" => edit(&mut reminder.time),
+            "date" => {
+                let date = reminder.date.get_or_insert_with(String::new);
+                edit(date);
+            }
+            _ => return false,
+        }
+        true
+    }
+
     pub(super) fn handle_click(&mut self, _el: &winit::event_loop::ActiveEventLoop) {
         let (mx, my) = self.logical_mouse_pos;
 
@@ -58,16 +158,19 @@ impl SettingsApp {
         }
 
         if mx < SIDEBAR_W {
-            let pages = 3;
             let start_y = 60.0;
-            for i in 0..pages {
+            for i in 0..SETTINGS_PAGE_COUNT {
                 let row_y = start_y + i as f32 * (SIDEBAR_ROW_H + 2.0);
                 if my >= row_y
                     && my <= row_y + SIDEBAR_ROW_H
                     && (SIDEBAR_PAD..=SIDEBAR_W - SIDEBAR_PAD).contains(&mx)
                 {
-                    if self.active_page != i as usize {
-                        self.active_page = i as usize;
+                    if self.active_page != i {
+                        self.active_page = i;
+                        self.focused_text_id = None;
+                        if let Some(win) = &self.window {
+                            win.set_ime_allowed(false);
+                        }
                         self.scroll_y = 0.0;
                         self.target_scroll_y = 0.0;
                         self.scroll_vel_y = 0.0;
@@ -101,6 +204,10 @@ impl SettingsApp {
             let tab_idx = (rel_x / tab_w) as usize;
             if tab_idx < tab_count && self.active_sub_page != tab_idx {
                 self.active_sub_page = tab_idx;
+                self.focused_text_id = None;
+                if let Some(win) = &self.window {
+                    win.set_ime_allowed(false);
+                }
                 self.scroll_y = 0.0;
                 self.target_scroll_y = 0.0;
                 self.scroll_vel_y = 0.0;
@@ -127,6 +234,9 @@ impl SettingsApp {
             }
             1 => self.handle_music_click(&items, content_x, content_y, content_w, content_start_y),
             2 => self.handle_about_click(&items, content_x, content_y, content_w, content_start_y),
+            3 => {
+                self.handle_reminder_click(&items, content_x, content_y, content_w, content_start_y)
+            }
             _ => {}
         }
     }
@@ -519,12 +629,17 @@ impl SettingsApp {
                 let btn_y = cy - POPUP_BTN_H / 2.0 - self.scroll_y;
 
                 let source = &self.config.lyrics_source;
+                let selected_idx = match source.as_str() {
+                    "lrclib" => 1,
+                    "qq" => 2,
+                    _ => 0,
+                };
                 self.popup = Some(PopupState::new(
                     PopupKind::LyricsSource,
                     Rect::from_xywh(btn_x, btn_y, POPUP_BTN_W, POPUP_BTN_H),
-                    vec!["163".to_string(), "LRCLIB".to_string()],
-                    vec!["163".to_string(), "lrclib".to_string()],
-                    if source == "163" { 0 } else { 1 },
+                    vec!["163".to_string(), "LRCLIB".to_string(), "QQ".to_string()],
+                    vec!["163".to_string(), "lrclib".to_string(), "qq".to_string()],
+                    selected_idx,
                     self.win_w / scale,
                     self.win_h / scale,
                 ));
@@ -626,6 +741,102 @@ impl SettingsApp {
         }
     }
 
+    fn handle_reminder_click(
+        &mut self,
+        items: &[SettingsItem],
+        mx: f32,
+        my: f32,
+        width: f32,
+        start_y: f32,
+    ) {
+        let result = hit_test(items, mx, my, start_y, width);
+        let mut changed = false;
+
+        match result {
+            ClickResult::Switch(idx) => {
+                let label = items
+                    .iter()
+                    .filter_map(|item| match item {
+                        SettingsItem::RowSwitch { label, .. } => Some(label.clone()),
+                        _ => None,
+                    })
+                    .nth(idx);
+                if let Some(label) = label {
+                    if let Some(index) = parse_reminder_switch_index(&label, " 启用")
+                        && let Some(reminder) = self.config.reminders.get_mut(index)
+                    {
+                        reminder.enabled = !reminder.enabled;
+                        changed = true;
+                    } else if let Some(index) = parse_reminder_switch_index(&label, " 每日重复")
+                        && let Some(reminder) = self.config.reminders.get_mut(index)
+                    {
+                        reminder.daily = !reminder.daily;
+                        if reminder.daily {
+                            reminder.date = None;
+                        } else if reminder.date.is_none() {
+                            reminder.date = Some("2026-07-08".to_string());
+                        }
+                        changed = true;
+                    }
+                }
+            }
+            ClickResult::TextInput(idx) => {
+                if let Some(SettingsItem::RowTextInput { id, .. }) = items.get(idx) {
+                    self.focused_text_id = Some(id.clone());
+                    if let Some(win) = &self.window {
+                        win.set_ime_allowed(true);
+                    }
+                    self.mark_items_dirty();
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                }
+            }
+            ClickResult::RowButton(idx) => {
+                if let Some(SettingsItem::RowButton { label, .. }) = items.get(idx) {
+                    if label == "添加提醒" {
+                        self.config.reminders.push(ReminderTaskConfig {
+                            enabled: true,
+                            title: "新提醒".to_string(),
+                            body: String::new(),
+                            time: "09:00".to_string(),
+                            daily: true,
+                            date: None,
+                        });
+                        changed = true;
+                    } else if let Some(index) = parse_delete_reminder_index(label)
+                        && index < self.config.reminders.len()
+                    {
+                        self.config.reminders.remove(index);
+                        self.focused_text_id = None;
+                        if let Some(win) = &self.window {
+                            win.set_ime_allowed(false);
+                        }
+                        changed = true;
+                    }
+                }
+            }
+            _ => {
+                self.focused_text_id = None;
+                if let Some(win) = &self.window {
+                    win.set_ime_allowed(false);
+                }
+                self.mark_items_dirty();
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+            }
+        }
+
+        if changed {
+            self.mark_items_dirty();
+            save_config(&self.config);
+            if let Some(win) = &self.window {
+                win.request_redraw();
+            }
+        }
+    }
+
     pub(super) fn get_hover_state(&mut self) -> bool {
         let (mx, my) = self.logical_mouse_pos;
 
@@ -646,7 +857,7 @@ impl SettingsApp {
 
         if mx < SIDEBAR_W {
             let start_y = 60.0;
-            for i in 0..3 {
+            for i in 0..SETTINGS_PAGE_COUNT {
                 let row_y = start_y + i as f32 * (SIDEBAR_ROW_H + 2.0);
                 if my >= row_y
                     && my <= row_y + SIDEBAR_ROW_H

@@ -143,10 +143,48 @@ pub struct AppConfig {
     pub cover_rotate: bool,
     #[serde(default = "default_update_channel")]
     pub update_channel: String,
+    #[serde(default = "default_reminders")]
+    pub reminders: Vec<ReminderTaskConfig>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ReminderTaskConfig {
+    #[serde(default = "default_reminder_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_reminder_title")]
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default = "default_reminder_time")]
+    pub time: String,
+    #[serde(default = "default_reminder_daily")]
+    pub daily: bool,
+    #[serde(default)]
+    pub date: Option<String>,
 }
 
 fn default_island_style() -> String {
     "liquid".to_string()
+}
+
+fn default_reminders() -> Vec<ReminderTaskConfig> {
+    Vec::new()
+}
+
+fn default_reminder_enabled() -> bool {
+    true
+}
+
+fn default_reminder_title() -> String {
+    "Reminder".to_string()
+}
+
+fn default_reminder_time() -> String {
+    "09:00".to_string()
+}
+
+fn default_reminder_daily() -> bool {
+    true
 }
 
 fn default_show_lyrics() -> bool {
@@ -287,6 +325,7 @@ impl Default for AppConfig {
             expanded_cover_shape: "square".to_string(),
             cover_rotate: false,
             update_channel: "stable".to_string(),
+            reminders: Vec::new(),
         }
     }
 }

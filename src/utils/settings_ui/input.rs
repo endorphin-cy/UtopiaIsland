@@ -11,6 +11,7 @@ pub enum ClickResult {
     CenterLink(usize),
     SourceButton(usize),
     RowButton(usize),
+    TextInput(usize),
     AppItem(usize),
     FolderSelect(usize),
     FolderClear(usize),
@@ -99,6 +100,15 @@ pub fn hit_test(items: &[SettingsItem], mx: f32, my: f32, start_y: f32, width: f
                 let btn_y = cy - POPUP_BTN_H / 2.0;
                 if in_rect(mx, my, btn_x, btn_y, POPUP_BTN_W, POPUP_BTN_H) {
                     return ClickResult::RowButton(idx);
+                }
+            }
+            SettingsItem::RowTextInput { enabled, .. } if *enabled => {
+                let cy = y + ROW_HEIGHT / 2.0;
+                let input_w = 170.0;
+                let input_x = CONTENT_PADDING + content_w - GROUP_INNER_PAD - input_w;
+                let input_y = cy - POPUP_BTN_H / 2.0;
+                if in_rect(mx, my, input_x, input_y, input_w, POPUP_BTN_H) {
+                    return ClickResult::TextInput(idx);
                 }
             }
             SettingsItem::RowAppItem { enabled, .. }
