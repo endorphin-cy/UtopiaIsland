@@ -66,11 +66,6 @@ fn svg_turbulence(uv: vec2<f32>) -> vec2<f32> {
     return vec2(n1 - 0.5, n2 - 0.5);
 }
 
-fn saturate_rgb(color: vec3<f32>, amount: f32) -> vec3<f32> {
-    let luma = dot(color, vec3(0.299, 0.587, 0.114));
-    return mix(vec3(luma), color, amount);
-}
-
 fn decode_displacement(uv: vec2<f32>, dims: vec2<u32>) -> vec3<f32> {
     let dm = sample_bilinear(displacement_tex, uv, dims);
     let dx = (dm.r - 0.5) * 2.0 * params.max_displacement;
@@ -148,16 +143,19 @@ fn liquid_glass_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let bottom_px = disp_dims_f.y - px.y;
     let min_edge_px = min(min(left_px, right_px), min(top_px, bottom_px));
     let hairline = 1.0 - smoothstep(0.0, 1.4, min_edge_px);
-    let top_line = (1.0 - smoothstep(0.0, 2.2, top_px)) * 0.22;
-    let left_line = (1.0 - smoothstep(0.0, 2.0, left_px)) * 0.18;
-    let right_line = (1.0 - smoothstep(0.0, 1.8, right_px)) * 0.13;
-    let bottom_line = (1.0 - smoothstep(0.0, 1.6, bottom_px)) * 0.10;
-    let edge_shine = hairline * 0.16 + top_line + left_line + right_line + bottom_line;
-    let mirror_opacity = 0.50;
-    let mirror_saturation = 10.0;
-    let saturated_mirror = clamp(saturate_rgb(glass_rgb, mirror_saturation), vec3(0.0), vec3(1.0));
-    let mirror_rgb = mix(saturated_mirror, vec3(1.0), 0.72);
-    final_rgb = final_rgb + mirror_rgb * edge_shine * mirror_opacity;
+    let soft_edge = smoothstep(1.0, 2.5, min_edge_px) * (1.0 - smoothstep(2.5, 6.5, min_edge_px));
+    let top_line = 1.0 - smoothstep(0.0, 2.2, top_px);
+    let left_line = 1.0 - smoothstep(0.0, 2.0, left_px);
+    let right_line = 1.0 - smoothstep(0.0, 1.8, right_px);
+    let bottom_line = 1.0 - smoothstep(0.0, 1.6, bottom_px);
+    let edge_shine = hairline * 0.22
+        + soft_edge * 0.12
+        + top_line * 0.50
+        + left_line * 0.38
+        + right_line * 0.08
+        + bottom_line * 0.05;
+    let mirror_rgb = vec3(1.0, 0.97, 0.86);
+    final_rgb = final_rgb + mirror_rgb * edge_shine;
 
     var result = vec4(final_rgb, 1.0);
 

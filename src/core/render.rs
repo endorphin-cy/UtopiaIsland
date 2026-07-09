@@ -11,12 +11,12 @@ use crate::utils::glass::get_glass_background;
 use crate::utils::liquid_glass::{LiquidGlassRenderer, get_liquid_glass_background};
 use skia_safe::canvas::SrcRectConstraint;
 use skia_safe::{
-    ClipOp, Color, FilterMode, ISize, MipmapMode, Paint, RRect, Rect, SamplingOptions,
-    Surface as SkSurface, image_filters, surfaces,
+    AlphaType, ClipOp, Color, ColorType, Data, FilterMode, ISize, Image, ImageInfo, MipmapMode,
+    Paint, RRect, Rect, SamplingOptions, Surface as SkSurface, image_filters, images, surfaces,
 };
 use softbuffer::Surface;
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use windows::Win32::Foundation::HWND;
 use winit::window::Window;
 
@@ -26,6 +26,132 @@ thread_local! {
     static SK_SURFACE: RefCell<Option<SkSurface>> = const { RefCell::new(None) };
     static MINI_COVER_ROTATION: RefCell<f32> = const { RefCell::new(0.0) };
 
+}
+
+struct FaceIdAnimationParams {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    alpha: u8,
+    global_scale: f32,
+    elapsed: f32,
+}
+
+struct FaceIdGifFrame {
+    image: Image,
+    start_ms: u32,
+}
+
+struct FaceIdGif {
+    frames: Vec<FaceIdGifFrame>,
+    total_ms: u32,
+}
+
+static FACEID_GIF: OnceLock<Option<FaceIdGif>> = OnceLock::new();
+
+fn faceid_gif() -> Option<&'static FaceIdGif> {
+    FACEID_GIF.get_or_init(load_faceid_gif).as_ref()
+}
+
+fn load_faceid_gif() -> Option<FaceIdGif> {
+    use image::AnimationDecoder;
+    use image::codecs::gif::GifDecoder;
+    use std::io::Cursor;
+
+    let bytes = include_bytes!("../../resources/faceid-loading.gif");
+    let decoder = GifDecoder::new(Cursor::new(bytes.as_slice())).ok()?;
+    let decoded_frames = decoder.into_frames().collect_frames().ok()?;
+    let mut frames = Vec::with_capacity(decoded_frames.len());
+    let mut start_ms = 0u32;
+
+    for frame in decoded_frames {
+        let (numer, denom) = frame.delay().numer_denom_ms();
+        let duration_ms = if denom == 0 {
+            80
+        } else {
+            ((numer as f32 / denom as f32).round() as u32).max(30)
+        };
+        let rgba = frame.into_buffer();
+        let width = rgba.width();
+        let height = rgba.height();
+        let mut raw = rgba.into_raw();
+        for pixel in raw.chunks_exact_mut(4) {
+            if pixel[0] > 238 && pixel[1] > 238 && pixel[2] > 238 {
+                pixel[3] = 0;
+            }
+        }
+        let info = ImageInfo::new(
+            ISize::new(width as i32, height as i32),
+            ColorType::RGBA8888,
+            AlphaType::Unpremul,
+            None,
+        );
+        let image = images::raster_from_data(&info, Data::new_copy(&raw), (width * 4) as usize)?;
+        frames.push(FaceIdGifFrame { image, start_ms });
+        start_ms = start_ms.saturating_add(duration_ms);
+    }
+
+    if frames.is_empty() {
+        None
+    } else {
+        Some(FaceIdGif {
+            frames,
+            total_ms: start_ms.max(1),
+        })
+    }
+}
+
+fn draw_faceid_unlock_animation(canvas: &skia_safe::Canvas, params: FaceIdAnimationParams) {
+    let FaceIdAnimationParams {
+        x,
+        y,
+        w,
+        h,
+        alpha,
+        global_scale,
+        elapsed,
+    } = params;
+
+    if let Some(gif) = faceid_gif() {
+        let pulse = if gif.frames.len() <= 1 {
+            1.0 + 0.055 * (elapsed * std::f32::consts::TAU * 1.35).sin()
+        } else {
+            1.0
+        };
+        let icon_size = (h * 0.94).min(w * 0.94).max(42.0 * global_scale);
+        let draw_size = icon_size * pulse;
+        let icon_x = x + (w - draw_size) / 2.0;
+        let icon_y = y + (h - draw_size) / 2.0;
+        let mut icon_paint = Paint::default();
+        icon_paint.set_anti_alias(true);
+        icon_paint.set_alpha_f(alpha as f32 / 255.0);
+        let elapsed_ms = ((elapsed * 1000.0).max(0.0) as u32) % gif.total_ms;
+        let frame = gif
+            .frames
+            .iter()
+            .rev()
+            .find(|frame| elapsed_ms >= frame.start_ms)
+            .unwrap_or(&gif.frames[0]);
+        let src_w = frame.image.width() as f32;
+        let src_h = frame.image.height() as f32;
+        let crop_size = src_w.min(src_h) * 0.52;
+        let src_rect = Rect::from_xywh(
+            (src_w - crop_size) / 2.0,
+            (src_h - crop_size) / 2.0,
+            crop_size,
+            crop_size,
+        );
+        let dst_rect = Rect::from_xywh(icon_x, icon_y, draw_size, draw_size);
+        let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear);
+        canvas.draw_image_rect_with_sampling_options(
+            &frame.image,
+            Some((&src_rect, SrcRectConstraint::Fast)),
+            dst_rect,
+            sampling,
+            &icon_paint,
+        );
+    }
 }
 
 pub struct LayoutParams {
@@ -480,7 +606,10 @@ pub fn draw_island(
 
     let important_mini_active = matches!(
         &mini_content,
-        Some(MiniContent::Plugin(ctx)) if ctx.id.source == "notification" || ctx.id.source == "reminder"
+        Some(MiniContent::Plugin(ctx))
+            if ctx.id.source == "notification"
+                || ctx.id.source == "reminder"
+                || ctx.id.source == "faceid"
     );
     let expanded_alpha_f = if important_mini_active {
         0.0
@@ -832,6 +961,7 @@ pub fn draw_island(
                 ));
                 let text_x = offset_x + 20.0 * global_scale;
                 let reminder_mini = ctx.id.source == "reminder";
+                let faceid_mini = ctx.id.source == "faceid";
                 let text_w = current_w
                     - if reminder_mini {
                         110.0 * global_scale
@@ -839,94 +969,111 @@ pub fn draw_island(
                         40.0 * global_scale
                     };
                 let notification_mini = ctx.id.source == "notification";
-                let important_mini = notification_mini || reminder_mini;
+                let important_mini = notification_mini || reminder_mini || faceid_mini;
                 let mini_h = if important_mini { current_h } else { base_h };
-                let text_y = if important_mini && !ctx.body.is_empty() {
-                    stable_offset_y + mini_h / 2.0 - font_sz * 0.55
+                if faceid_mini {
+                    let elapsed = ctx.created_at.elapsed().as_secs_f32();
+                    draw_faceid_unlock_animation(
+                        canvas,
+                        FaceIdAnimationParams {
+                            x: offset_x,
+                            y: stable_offset_y,
+                            w: current_w,
+                            h: mini_h,
+                            alpha,
+                            global_scale,
+                            elapsed,
+                        },
+                    );
+                    widget_animating = elapsed < 2.6;
                 } else {
-                    stable_offset_y + mini_h / 2.0 - font_sz * 0.3
-                };
-                canvas.save();
-                let clip = Rect::from_xywh(text_x, stable_offset_y, text_w, mini_h);
-                canvas.clip_rect(clip, ClipOp::Intersect, true);
-                draw_text_cached(DrawTextCachedParams {
-                    canvas,
-                    text: &ctx.title,
-                    x: text_x,
-                    y: text_y,
-                    size: font_sz,
-                    bold: true,
-                    paint: &text_paint,
-                });
-                if !ctx.body.is_empty() {
-                    let sec_font_sz = font_sz * 0.8;
-                    let mut sec_paint = Paint::default();
-                    sec_paint.set_anti_alias(true);
-                    sec_paint.set_color(Color::from_argb(
-                        (alpha as f32 * 0.7) as u8,
-                        text_color.r(),
-                        text_color.g(),
-                        text_color.b(),
-                    ));
-                    let sec_y = text_y
-                        + if important_mini {
-                            font_sz * 1.15
-                        } else {
-                            font_sz * 1.3
-                        };
+                    let text_y = if important_mini && !ctx.body.is_empty() {
+                        stable_offset_y + mini_h / 2.0 - font_sz * 0.55
+                    } else {
+                        stable_offset_y + mini_h / 2.0 - font_sz * 0.3
+                    };
+                    canvas.save();
+                    let clip = Rect::from_xywh(text_x, stable_offset_y, text_w, mini_h);
+                    canvas.clip_rect(clip, ClipOp::Intersect, true);
                     draw_text_cached(DrawTextCachedParams {
                         canvas,
-                        text: &ctx.body,
+                        text: &ctx.title,
                         x: text_x,
-                        y: sec_y,
-                        size: sec_font_sz,
-                        bold: false,
-                        paint: &sec_paint,
-                    });
-                }
-                canvas.restore();
-
-                if reminder_mini {
-                    let button_w = 52.0 * global_scale;
-                    let button_h = 18.0 * global_scale;
-                    let button_x = offset_x + current_w - button_w - 10.0 * global_scale;
-                    let button_y = stable_offset_y + (mini_h - button_h) / 2.0;
-                    let mut button_paint = Paint::default();
-                    button_paint.set_anti_alias(true);
-                    button_paint.set_color(Color::from_argb(
-                        (alpha as f32 * 0.88) as u8,
-                        255,
-                        255,
-                        255,
-                    ));
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(
-                            Rect::from_xywh(button_x, button_y, button_w, button_h),
-                            button_h / 2.0,
-                            button_h / 2.0,
-                        ),
-                        &button_paint,
-                    );
-
-                    let mut button_text_paint = Paint::default();
-                    button_text_paint.set_anti_alias(true);
-                    button_text_paint.set_color(Color::from_argb(alpha, 20, 20, 24));
-                    let button_text = "确定";
-                    let button_font_sz = font_sz * 0.78;
-                    let button_text_w = FontManager::global().measure_text_cached(
-                        button_text,
-                        button_font_sz,
-                        skia_safe::FontStyle::bold(),
-                    );
-                    draw_text_cached(DrawTextCachedParams {
-                        canvas,
-                        text: button_text,
-                        x: button_x + (button_w - button_text_w) / 2.0,
-                        y: button_y + button_h / 2.0 + button_font_sz * 0.35,
-                        size: button_font_sz,
+                        y: text_y,
+                        size: font_sz,
                         bold: true,
-                        paint: &button_text_paint,
+                        paint: &text_paint,
                     });
+                    if !ctx.body.is_empty() {
+                        let sec_font_sz = font_sz * 0.8;
+                        let mut sec_paint = Paint::default();
+                        sec_paint.set_anti_alias(true);
+                        sec_paint.set_color(Color::from_argb(
+                            (alpha as f32 * 0.7) as u8,
+                            text_color.r(),
+                            text_color.g(),
+                            text_color.b(),
+                        ));
+                        let sec_y = text_y
+                            + if important_mini {
+                                font_sz * 1.15
+                            } else {
+                                font_sz * 1.3
+                            };
+                        draw_text_cached(DrawTextCachedParams {
+                            canvas,
+                            text: &ctx.body,
+                            x: text_x,
+                            y: sec_y,
+                            size: sec_font_sz,
+                            bold: false,
+                            paint: &sec_paint,
+                        });
+                    }
+                    canvas.restore();
+
+                    if reminder_mini {
+                        let button_w = 52.0 * global_scale;
+                        let button_h = 18.0 * global_scale;
+                        let button_x = offset_x + current_w - button_w - 10.0 * global_scale;
+                        let button_y = stable_offset_y + (mini_h - button_h) / 2.0;
+                        let mut button_paint = Paint::default();
+                        button_paint.set_anti_alias(true);
+                        button_paint.set_color(Color::from_argb(
+                            (alpha as f32 * 0.88) as u8,
+                            255,
+                            255,
+                            255,
+                        ));
+                        canvas.draw_rrect(
+                            RRect::new_rect_xy(
+                                Rect::from_xywh(button_x, button_y, button_w, button_h),
+                                button_h / 2.0,
+                                button_h / 2.0,
+                            ),
+                            &button_paint,
+                        );
+
+                        let mut button_text_paint = Paint::default();
+                        button_text_paint.set_anti_alias(true);
+                        button_text_paint.set_color(Color::from_argb(alpha, 20, 20, 24));
+                        let button_text = "确定";
+                        let button_font_sz = font_sz * 0.78;
+                        let button_text_w = FontManager::global().measure_text_cached(
+                            button_text,
+                            button_font_sz,
+                            skia_safe::FontStyle::bold(),
+                        );
+                        draw_text_cached(DrawTextCachedParams {
+                            canvas,
+                            text: button_text,
+                            x: button_x + (button_w - button_text_w) / 2.0,
+                            y: button_y + button_h / 2.0 + button_font_sz * 0.35,
+                            size: button_font_sz,
+                            bold: true,
+                            paint: &button_text_paint,
+                        });
+                    }
                 }
             }
             None => {}

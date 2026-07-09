@@ -29,9 +29,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::System::RemoteDesktop::{
+    NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
+};
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_THICKFRAME,
@@ -46,6 +50,7 @@ use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{Window, WindowButtons, WindowId, WindowLevel};
 
 type InstallResult = Result<(PluginManifest, PathBuf, Vec<String>), String>;
+static FACEID_UNLOCK_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub struct App {
     window: Option<Arc<Window>>,
@@ -185,6 +190,10 @@ struct IslandLayout {
 }
 
 impl App {
+    pub fn notify_session_unlocked() {
+        FACEID_UNLOCK_REQUESTED.store(true, Ordering::Release);
+    }
+
     fn set_aumid() {
         let aumid = "WinIsland.PluginManager";
         let wide: Vec<u16> = aumid.encode_utf16().chain(std::iter::once(0)).collect();
@@ -302,6 +311,42 @@ impl App {
             .is_some_and(|ctx| ctx.id.source == "reminder")
     }
 
+    fn faceid_mini_active(&self) -> bool {
+        self.ctx_mgr
+            .current_plugin_mini()
+            .is_some_and(|ctx| ctx.id.source == "faceid")
+    }
+
+    fn important_mini_active(&self) -> bool {
+        self.notification_mini_active() || self.reminder_mini_active() || self.faceid_mini_active()
+    }
+
+    fn drain_faceid_unlock(&mut self, window: &Window) {
+        if !FACEID_UNLOCK_REQUESTED.swap(false, Ordering::AcqRel) {
+            return;
+        }
+
+        self.ctx_mgr.push_context(PluginContext {
+            id: ContextId::new("faceid"),
+            priority: Priority::High,
+            title: "Face ID".to_string(),
+            body: "Unlocked".to_string(),
+            icon: Vec::new(),
+            duration_sec: 3,
+            mini_render: true,
+            mini_text: "Face ID".to_string(),
+            created_at: Instant::now(),
+            expanded_started_at: None,
+            collapsed_at: None,
+            mini_timeout_start: None,
+        });
+        self.auto_hidden = false;
+        self.manually_hidden = false;
+        self.idle_timer = Instant::now();
+        self.spring_hide.velocity = -0.65;
+        window.request_redraw();
+    }
+
     fn poll_reminders(&mut self, window: &Window) {
         if let Some(ctx) = self.reminders.due_context(&self.config.reminders) {
             self.ctx_mgr.push_context(ctx);
@@ -382,6 +427,17 @@ impl App {
     fn refresh_capture_exclusion(window: &Window) {
         if let Some(hwnd) = Self::window_hwnd(window) {
             crate::utils::win32::exclude_from_capture(hwnd);
+        }
+    }
+
+    fn register_session_notifications(window: &Window) {
+        if let Some(hwnd) = Self::window_hwnd(window) {
+            // SAFETY: The HWND belongs to the live WinIsland window and is valid after creation.
+            if let Err(err) =
+                unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) }
+            {
+                log::warn!("Session notification registration failed: {:?}", err);
+            }
         }
     }
 
@@ -864,11 +920,13 @@ impl App {
     ) -> f32 {
         let is_currently_hidden =
             self.auto_hidden || self.manually_hidden || self.spring_hide.value > 0.1;
-        let important_mini_active = (self.notification_mini_active()
-            || self.reminder_mini_active())
-            && !self.expanded
-            && !is_currently_hidden;
-        let target_base_w = if important_mini_active {
+        let faceid_mini_active =
+            self.faceid_mini_active() && !self.expanded && !is_currently_hidden;
+        let important_mini_active =
+            self.important_mini_active() && !self.expanded && !is_currently_hidden;
+        let target_base_w = if faceid_mini_active {
+            self.config.base_height * 3.0
+        } else if important_mini_active {
             self.config.base_width * 2.0
         } else if music_active && !self.expanded && !is_currently_hidden {
             let has_visible_lyrics = self.config.show_lyrics
@@ -983,6 +1041,7 @@ impl ApplicationHandler for App {
                 );
             }
             Self::refresh_capture_exclusion(&window);
+            Self::register_session_notifications(&window);
 
             self.window = Some(window.clone());
             log::info!(
@@ -1347,6 +1406,7 @@ impl ApplicationHandler for App {
         self.handle_tray_events(&window, event_loop);
         self.reload_config_if_changed(&window);
         self.drain_system_notifications(&window);
+        self.drain_faceid_unlock(&window);
         self.poll_reminders(&window);
 
         if let Some(rx) = self.pending_install.take() {
@@ -1465,16 +1525,16 @@ impl ApplicationHandler for App {
         }
 
         let is_paused_idle = music_active && !media.is_playing;
-        let reminder_active = self.reminder_mini_active();
+        let important_mini_active = self.important_mini_active();
         let is_idle = !is_hovering_visible
             && !self.expanded
             && !self.is_dragging
-            && !reminder_active
+            && !important_mini_active
             && (!music_active || is_paused_idle);
         if !self.config.auto_hide {
             self.auto_hidden = false;
             self.idle_timer = Instant::now();
-        } else if reminder_active {
+        } else if important_mini_active {
             self.auto_hidden = false;
             self.manually_hidden = false;
             self.idle_timer = Instant::now();
@@ -1662,7 +1722,7 @@ impl ApplicationHandler for App {
             window.request_redraw();
         }
 
-        let important_mini_active = self.notification_mini_active() || self.reminder_mini_active();
+        let important_mini_active = self.important_mini_active();
         let target_w = self.compute_lyric_target_width(&window, music_active, is_paused, dt);
         let target_h = (if self.expanded {
             self.config.expanded_height

@@ -13,8 +13,12 @@ use std::mem::ManuallyDrop;
 use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
 use windows::Win32::Foundation::{CloseHandle, GetLastError};
 use windows::Win32::System::Threading::CreateMutexW;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{MSG, WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK};
 use windows::core::w;
 use winit::event_loop::EventLoop;
+#[cfg(target_os = "windows")]
+use winit::platform::windows::EventLoopBuilderExtWindows;
 
 fn main() {
     let _ = logger::init();
@@ -105,7 +109,20 @@ fn main() {
 
         utils::updater::start_update_checker();
 
-        let event_loop = EventLoop::new().unwrap();
+        let mut event_loop_builder = EventLoop::builder();
+        #[cfg(target_os = "windows")]
+        event_loop_builder.with_msg_hook(|msg| {
+            if msg.is_null() {
+                return false;
+            }
+            // SAFETY: winit passes a valid pointer to the MSG currently being dispatched.
+            let msg = unsafe { &*(msg as *const MSG) };
+            if msg.message == WM_WTSSESSION_CHANGE && msg.wParam.0 == WTS_SESSION_UNLOCK as usize {
+                App::notify_session_unlocked();
+            }
+            false
+        });
+        let event_loop = event_loop_builder.build().unwrap();
         let mut app = App::default();
         event_loop.run_app(&mut app).unwrap();
         log::info!("Application event loop exited, shutting down");
