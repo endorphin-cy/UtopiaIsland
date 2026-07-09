@@ -235,7 +235,7 @@ pub fn draw_island(
                 screen_y,
                 current_w as u32,
                 current_h as u32,
-                0.0,
+                3.0 * global_scale,
                 expansion_progress,
                 elapsed,
             )
@@ -270,7 +270,7 @@ pub fn draw_island(
             canvas.draw_image_rect_with_sampling_options(&bg_img, None, rect, sampling, &paint);
 
             let mut darken = Paint::default();
-            darken.set_color(Color::from_argb(72, 10, 10, 14));
+            darken.set_color(Color::from_argb(36, 10, 10, 14));
             darken.set_anti_alias(true);
             darken.set_blend_mode(skia_safe::BlendMode::Multiply);
             canvas.draw_rect(rect, &darken);
@@ -478,7 +478,15 @@ pub fn draw_island(
         canvas.draw_rrect(rrect, &bg_paint);
     }
 
-    let expanded_alpha_f = (expansion_progress.powf(2.0)).clamp(0.0, 1.0) * (1.0 - hide_progress);
+    let important_mini_active = matches!(
+        &mini_content,
+        Some(MiniContent::Plugin(ctx)) if ctx.id.source == "notification" || ctx.id.source == "reminder"
+    );
+    let expanded_alpha_f = if important_mini_active {
+        0.0
+    } else {
+        (expansion_progress.powf(2.0)).clamp(0.0, 1.0) * (1.0 - hide_progress)
+    };
     let mini_alpha_f = (1.0 - expansion_progress * 1.5).clamp(0.0, 1.0) * (1.0 - hide_progress);
 
     let palette = if expanded_alpha_f > 0.01 || mini_alpha_f > 0.01 {

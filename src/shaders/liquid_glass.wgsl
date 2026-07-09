@@ -2,7 +2,7 @@
 // Liquid Glass — Apple-style background refraction shader
 // Ported from liquid-glass-react (https://github.com/nicepkg/liquid-glass-react)
 //
-// Pure displacement-based refraction with chromatic aberration and Fresnel.
+// CSS/SVG-inspired macOS liquid glass trial.
 // No background blur — the glass is fully transparent with edge-only effects.
 // =============================================================================
 
@@ -21,10 +21,11 @@ struct Params {
     _pad1: f32,                      // offset 60
 }
 
-@group(0) @binding(0) var input_tex: texture_2d<f32>;
-@group(0) @binding(1) var output_tex: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(2) var<uniform> params: Params;
-@group(0) @binding(3) var displacement_tex: texture_2d<f32>;
+@group(0) @binding(0) var raw_tex: texture_2d<f32>;
+@group(0) @binding(1) var blur_tex: texture_2d<f32>;
+@group(0) @binding(2) var output_tex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(3) var<uniform> params: Params;
+@group(0) @binding(4) var displacement_tex: texture_2d<f32>;
 
 fn sample_bilinear(tex: texture_2d<f32>, uv: vec2<f32>, dims: vec2<u32>) -> vec4<f32> {
     let dims_f = vec2<f32>(dims);
@@ -43,6 +44,33 @@ fn sample_bilinear(tex: texture_2d<f32>, uv: vec2<f32>, dims: vec2<u32>) -> vec4
     );
 }
 
+fn hash21(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+fn value_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(hash21(i), hash21(i + vec2(1.0, 0.0)), u.x),
+        mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), u.x),
+        u.y,
+    );
+}
+
+fn svg_turbulence(uv: vec2<f32>) -> vec2<f32> {
+    let p = uv * vec2(4.0, 3.0);
+    let n1 = value_noise(p);
+    let n2 = value_noise(p + vec2(19.17, 7.31));
+    return vec2(n1 - 0.5, n2 - 0.5);
+}
+
+fn saturate_rgb(color: vec3<f32>, amount: f32) -> vec3<f32> {
+    let luma = dot(color, vec3(0.299, 0.587, 0.114));
+    return mix(vec3(luma), color, amount);
+}
+
 fn decode_displacement(uv: vec2<f32>, dims: vec2<u32>) -> vec3<f32> {
     let dm = sample_bilinear(displacement_tex, uv, dims);
     let dx = (dm.r - 0.5) * 2.0 * params.max_displacement;
@@ -56,37 +84,35 @@ fn apply_curvature(uv: vec2<f32>, edge_factor: f32) -> vec2<f32> {
     let dist = length(to_center);
     if dist < 0.001 { return uv; }
     let curvature = params.curvature_strength * edge_factor * dist * dist;
-    return uv + normalize(to_center) * curvature * 0.15;
+    return uv + normalize(to_center) * curvature * 0.30;
 }
 
-fn schlick_fresnel(edge_factor: f32) -> f32 {
-    let F0 = 0.04;
-    let cos_theta = 1.0 - edge_factor;
-    let primary = F0 + (1.0 - F0) * pow(1.0 - cos_theta, params.fresnel_power);
-    let rim = pow(edge_factor, 1.5) * 0.3;
-    return (primary + rim) * params.fresnel_intensity;
-}
+fn rect_edge_info(uv: vec2<f32>, dims_f: vec2<f32>) -> vec3<f32> {
+    let px = uv * dims_f;
+    let left = px.x;
+    let right = dims_f.x - px.x;
+    let top = px.y;
+    let bottom = dims_f.y - px.y;
+    let edge_px = min(min(left, right), min(top, bottom));
+    let ring = 1.0 - smoothstep(4.0, 32.0, edge_px);
 
-fn ambient_diffuse(uv: vec2<f32>, dims: vec2<u32>, edge_factor: f32) -> f32 {
-    let dims_f = vec2<f32>(dims);
-    let eps = 1.0 / dims_f;
-    let e_x = sample_bilinear(displacement_tex, uv + vec2(eps.x, 0.0), dims).b
-            - sample_bilinear(displacement_tex, uv - vec2(eps.x, 0.0), dims).b;
-    let e_y = sample_bilinear(displacement_tex, uv + vec2(0.0, eps.y), dims).b
-            - sample_bilinear(displacement_tex, uv - vec2(0.0, eps.y), dims).b;
-    let nx = -e_x * 4.0;
-    let ny = -e_y * 4.0;
-    let nz = 1.0;
-    let n_len = sqrt(nx * nx + ny * ny + nz * nz);
-    let light = vec3(-0.4, -0.5, 0.76);
-    let ndotl = max((nx * light.x + ny * light.y + nz * light.z) / n_len, 0.0);
-    return ndotl * edge_factor * 0.15;
+    var normal = vec2<f32>(0.0, 0.0);
+    if left <= right && left <= top && left <= bottom {
+        normal = vec2<f32>(-1.0, 0.0);
+    } else if right <= top && right <= bottom {
+        normal = vec2<f32>(1.0, 0.0);
+    } else if top <= bottom {
+        normal = vec2<f32>(0.0, -1.0);
+    } else {
+        normal = vec2<f32>(0.0, 1.0);
+    }
+    return vec3<f32>(normal, ring);
 }
 
 @compute @workgroup_size(8, 8)
 fn liquid_glass_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let disp_dims = textureDimensions(displacement_tex);
-    let input_dims = textureDimensions(input_tex);
+    let input_dims = textureDimensions(blur_tex);
     if gid.x >= disp_dims.x || gid.y >= disp_dims.y { return; }
     let disp_dims_f = vec2<f32>(disp_dims);
     let input_dims_f = vec2<f32>(input_dims);
@@ -94,42 +120,46 @@ fn liquid_glass_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let input_px = vec2<f32>(gid.xy) + vec2(params.margin_x, params.margin_y);
 
     let disp = decode_displacement(uv, disp_dims);
-    let dx = disp.x;
-    let dy = disp.y;
-    let edge_factor = disp.z;
+    let raw_edge_factor = disp.z;
+    let rect_edge = rect_edge_info(uv, disp_dims_f);
+    let shape_edge = smoothstep(0.28, 0.58, raw_edge_factor);
+    let edge_factor = max(rect_edge.z, shape_edge);
+    let edge_adhesion = pow(edge_factor, 1.55);
+    let refraction_level = 0.45;
+    let rect_push = rect_edge.xy * params.max_displacement * 2.40 * refraction_level * edge_adhesion;
+    let svg_warp = svg_turbulence(uv) * params.max_displacement * 1.60 * refraction_level * edge_factor;
+    let dx = disp.x * shape_edge * 2.10 * refraction_level + rect_push.x + svg_warp.x;
+    let dy = disp.y * shape_edge * 2.10 * refraction_level + rect_push.y + svg_warp.y;
+
+    let base_uv = input_px / input_dims_f;
+    let base_rgb = sample_bilinear(blur_tex, base_uv, input_dims).rgb;
 
     let curved_uv = apply_curvature(uv, edge_factor);
     let curvature_px = (curved_uv - uv) * disp_dims_f;
+    let refract_uv = (input_px + curvature_px + vec2(dx, dy)) / input_dims_f;
+    let refracted_rgb = sample_bilinear(blur_tex, refract_uv, input_dims).rgb;
+    let glass_rgb = mix(base_rgb, refracted_rgb, min(refraction_level, refraction_level * edge_factor));
+    var final_rgb = glass_rgb;
 
-    // --- Per-channel chromatic aberration (from React impl) ---
-    // Each channel gets slightly different displacement scale
-    let aberration = params.max_displacement * 0.10 * edge_factor;
-    let r_uv = (input_px + curvature_px + vec2(dx, dy) * 1.0 + vec2(aberration, 0.0)) / input_dims_f;
-    let g_uv = (input_px + curvature_px + vec2(dx, dy) * (1.0 - edge_factor * 0.10)) / input_dims_f;
-    let b_uv = (input_px + curvature_px + vec2(dx, dy) * (1.0 - edge_factor * 0.20) - vec2(aberration, 0.0)) / input_dims_f;
+    let px = uv * disp_dims_f;
+    let top_px = px.y;
+    let left_px = px.x;
+    let right_px = disp_dims_f.x - px.x;
+    let bottom_px = disp_dims_f.y - px.y;
+    let min_edge_px = min(min(left_px, right_px), min(top_px, bottom_px));
+    let hairline = 1.0 - smoothstep(0.0, 1.4, min_edge_px);
+    let top_line = (1.0 - smoothstep(0.0, 2.2, top_px)) * 0.22;
+    let left_line = (1.0 - smoothstep(0.0, 2.0, left_px)) * 0.18;
+    let right_line = (1.0 - smoothstep(0.0, 1.8, right_px)) * 0.13;
+    let bottom_line = (1.0 - smoothstep(0.0, 1.6, bottom_px)) * 0.10;
+    let edge_shine = hairline * 0.16 + top_line + left_line + right_line + bottom_line;
+    let mirror_opacity = 0.50;
+    let mirror_saturation = 10.0;
+    let saturated_mirror = clamp(saturate_rgb(glass_rgb, mirror_saturation), vec3(0.0), vec3(1.0));
+    let mirror_rgb = mix(saturated_mirror, vec3(1.0), 0.72);
+    final_rgb = final_rgb + mirror_rgb * edge_shine * mirror_opacity;
 
-    let r_val = sample_bilinear(input_tex, r_uv, input_dims).r;
-    let g_val = sample_bilinear(input_tex, g_uv, input_dims).g;
-    let b_val = sample_bilinear(input_tex, b_uv, input_dims).b;
-
-    var result = vec4(r_val, g_val, b_val, 1.0);
-
-    // --- Fresnel edge highlight ---
-    let fresnel = schlick_fresnel(edge_factor);
-    result = result + vec4(vec3(fresnel), 0.0);
-
-    // --- Ambient diffuse ---
-    let diffuse = ambient_diffuse(uv, disp_dims, edge_factor);
-    result = result + vec4(vec3(diffuse * 0.8, diffuse * 0.85, diffuse), 0.0);
-
-    // --- Inner contour line ---
-    let inner_line = smoothstep(0.7, 0.85, edge_factor) * (1.0 - smoothstep(0.85, 1.0, edge_factor));
-    result = result - vec4(vec3(inner_line * 0.03), 0.0);
-
-    // --- Curvature center highlight ---
-    let center_dist = length(uv - vec2(0.5));
-    let curvature_highlight = params.curvature_strength * exp(-center_dist * center_dist * 8.0) * 0.02;
-    result = result + vec4(vec3(curvature_highlight), 0.0);
+    var result = vec4(final_rgb, 1.0);
 
     result = clamp(result, vec4(0.0), vec4(1.0));
     result.a = 1.0;

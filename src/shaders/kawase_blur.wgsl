@@ -30,10 +30,22 @@ fn kawase_blur(@builtin(global_invocation_id) gid: vec3<u32>) {
     let offset = params.texel_size * params.radius;
 
     // Kawase kernel: 4 samples at half-pixel ± radius offsets
-    var sum = textureSampleLevel(input_tex, blur_sampler, uv + vec2(-offset.x, -offset.y), 0.0);
-    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2( offset.x, -offset.y), 0.0);
-    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(-offset.x,  offset.y), 0.0);
-    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2( offset.x,  offset.y), 0.0);
+    let half_offset = offset * 0.5;
+    let diag_offset = offset * 0.70710678;
 
-    textureStore(output_tex, vec2<i32>(gid.xy), sum * 0.25);
+    var sum = textureSampleLevel(input_tex, blur_sampler, uv, 0.0) * 4.0;
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2( half_offset.x, 0.0), 0.0) * 2.0;
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(-half_offset.x, 0.0), 0.0) * 2.0;
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(0.0,  half_offset.y), 0.0) * 2.0;
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(0.0, -half_offset.y), 0.0) * 2.0;
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2( offset.x, 0.0), 0.0);
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(-offset.x, 0.0), 0.0);
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(0.0,  offset.y), 0.0);
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(0.0, -offset.y), 0.0);
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2( diag_offset.x,  diag_offset.y), 0.0);
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(-diag_offset.x,  diag_offset.y), 0.0);
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2( diag_offset.x, -diag_offset.y), 0.0);
+    sum += textureSampleLevel(input_tex, blur_sampler, uv + vec2(-diag_offset.x, -diag_offset.y), 0.0);
+
+    textureStore(output_tex, vec2<i32>(gid.xy), sum * 0.05);
 }

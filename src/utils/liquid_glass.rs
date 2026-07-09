@@ -216,7 +216,7 @@ impl LiquidGlassRenderer {
                 ],
             });
 
-        // Glass BGL: input tex + output storage + uniform + displacement tex
+        // Glass BGL: raw input + blurred input + output storage + uniform + displacement tex
         let glass_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("LiquidGlass BGL"),
@@ -234,6 +234,16 @@ impl LiquidGlassRenderer {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::StorageTexture {
                             access: wgpu::StorageTextureAccess::WriteOnly,
                             format: wgpu::TextureFormat::Rgba8Unorm,
@@ -242,7 +252,7 @@ impl LiquidGlassRenderer {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 2,
+                        binding: 3,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -252,7 +262,7 @@ impl LiquidGlassRenderer {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 3,
+                        binding: 4,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -689,10 +699,10 @@ impl LiquidGlassRenderer {
             in_row_bytes,
         );
 
-        // Ping-pong blur textures
+        // Ping-pong blur textures over the full captured desktop region.
         let tex_a = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BlurTex A"),
-            size: output_extent,
+            size: input_extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -702,7 +712,7 @@ impl LiquidGlassRenderer {
         });
         let tex_b = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BlurTex B"),
-            size: output_extent,
+            size: input_extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -722,10 +732,18 @@ impl LiquidGlassRenderer {
             });
 
         // Only run Kawase blur passes when sigma is meaningful
-        let glass_input_view = if blur_sigma > 0.5 {
-            let texel_size = [1.0 / w as f32, 1.0 / h as f32];
-            let blur_factor = (blur_sigma / 2.5).clamp(0.3, 2.0);
-            let radii = [3.0 * blur_factor, 2.0 * blur_factor, 1.0 * blur_factor];
+        let blurred_input_view = if blur_sigma > 0.5 {
+            let texel_size = [1.0 / cap_w as f32, 1.0 / cap_h as f32];
+            let blur_factor = (blur_sigma / 18.0).clamp(1.0, 1.8);
+            let radii = [
+                3.0 * blur_factor,
+                2.4 * blur_factor,
+                2.0 * blur_factor,
+                1.6 * blur_factor,
+                1.2 * blur_factor,
+                0.9 * blur_factor,
+                0.6 * blur_factor,
+            ];
 
             for (i, &radius) in radii.iter().enumerate() {
                 let (src, dst) = match i {
@@ -774,7 +792,7 @@ impl LiquidGlassRenderer {
                 });
                 pass.set_pipeline(&self.blur_pipeline);
                 pass.set_bind_group(0, &bg, &[]);
-                pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
+                pass.dispatch_workgroups(cap_w.div_ceil(8), cap_h.div_ceil(8), 1);
             }
             tex_a.create_view(&Default::default())
         } else {
@@ -799,15 +817,15 @@ impl LiquidGlassRenderer {
 
         let ep = expansion_progress.clamp(0.0, 1.0);
         let params = LiquidParams {
-            max_displacement: (margin as f32 * (0.22 + 0.10 * ep)).max(3.5),
+            max_displacement: (margin as f32 * (0.50 + 0.18 * ep)).max(8.0),
             blur_sigma: 0.01,
             blur_center_falloff: 0.80,
             fresnel_power: 1.5,
-            fresnel_intensity: 0.2 + 0.4 * ep,
+            fresnel_intensity: 0.10 + 0.18 * ep,
             glass_opacity: 0.0,
             _pad0: [0.0; 2],
             tint: [0.0, 0.0, 0.0, 0.0],
-            curvature_strength: 0.50 + 0.25 * ep,
+            curvature_strength: 1.15 + 0.50 * ep,
             margin_x: margin as f32,
             margin_y: margin as f32,
             _pad1: 0.0,
@@ -826,18 +844,22 @@ impl LiquidGlassRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&glass_input_view),
+                    resource: wgpu::BindingResource::TextureView(&input_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&output_view),
+                    resource: wgpu::BindingResource::TextureView(&blurred_input_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: ub.as_entire_binding(),
+                    resource: wgpu::BindingResource::TextureView(&output_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: ub.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(&disp_view),
                 },
             ],
